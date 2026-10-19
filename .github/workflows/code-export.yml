@@ -1,0 +1,247 @@
+name: Code Export
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Что экспортировать (игнорируется, если задан paths)"
+        required: true
+        default: "core"
+        type: choice
+        options: [core, tests, all]
+      paths:
+        description: "Явные пути/glob через запятую, напр. 'nano_vm/*,pyproject.toml'"
+        required: false
+        default: ""
+        type: string
+      max_part_chars:
+        description: "Макс. символов в части (чтобы влезла в одно сообщение)"
+        required: false
+        default: "40000"
+        type: string
+      include_file_hashes:
+        description: "sha256 в заголовках файлов и манифесте"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # экспортируется HEAD (закоммиченное), не рабочая копия
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build chunked export
+        env:
+          EXPORT_MODE: ${{ inputs.mode }}
+          EXPORT_PATHS: ${{ inputs.paths }}
+          MAX_PART_CHARS: ${{ inputs.max_part_chars }}
+          EXPORT_HASHES: ${{ inputs.include_file_hashes }}
+          EXPORT_COMMIT: ${{ github.sha }}
+          EXPORT_BRANCH: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYEOF'
+          import fnmatch
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          MODE = os.environ.get("EXPORT_MODE", "core")
+          PATHS = os.environ.get("EXPORT_PATHS", "").strip()
+          MAX_PART = int(os.environ.get("MAX_PART_CHARS", "40000"))
+          WITH_HASHES = os.environ.get("EXPORT_HASHES", "true") == "true"
+          COMMIT = os.environ.get("EXPORT_COMMIT", "")
+          BRANCH = os.environ.get("EXPORT_BRANCH", "")
+          STAMP = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+          if MAX_PART < 1000:
+              sys.exit("MAX_PART_CHARS слишком мал (минимум 1000)")
+
+          TEXT_EXTS = {".py", ".js", ".ts", ".json", ".md", ".txt",
+                       ".yml", ".yaml", ".sh", ".toml", ".in", ".cfg", ".ini"}
+          TEXT_NAMES = {"Dockerfile", "LICENCE", "LICENSE", "py.typed"}
+          # Собственные артефакты исключаем — иначе экспорт вложится сам в себя
+          SELF_OUTPUTS = {"project-snapshot.json", "project-snapshot.md",
+                          "tree.json", "repo-structure.json"}
+
+          PRESETS = {
+              "core": ["nano_vm/*", "pyproject.toml", "README.md"],
+              "tests": ["tests/*"],
+              "all": None,  # все текстовые файлы репозитория
+          }
+
+          if PATHS:
+              rules = []
+              for item in PATHS.split(","):
+                  item = item.strip()
+                  if item:
+                      rules.append(item)
+                      rules.append(item.rstrip("/") + "/*")
+          elif MODE in PRESETS:
+              rules = PRESETS[MODE]
+          else:
+              sys.exit(f"неизвестный режим {MODE!r} и paths не заданы")
+
+          def is_text(rel):
+              p = Path(rel)
+              return p.name in TEXT_NAMES or p.suffix.lower() in TEXT_EXTS
+
+          def selected(rel):
+              if rel in SELF_OUTPUTS or rel.startswith("export/"):
+                  return False
+              if rules is None:
+                  return is_text(rel)
+              return any(fnmatch.fnmatch(rel, pat) for pat in rules)
+
+          raw = subprocess.run(["git", "ls-files", "-z"],
+                               capture_output=True, check=True).stdout
+
+          files = []
+          for name in raw.split(b"\0"):
+              if not name:
+                  continue
+              try:
+                  rel = name.decode("utf-8")
+              except UnicodeDecodeError:
+                  print("skip (имя не в UTF-8):", name)
+                  continue
+              p = Path(rel)
+              if not p.is_file() or not selected(rel):
+                  continue
+              data = p.read_bytes()
+              try:
+                  text = data.decode("utf-8")
+                  replaced = False
+              except UnicodeDecodeError:
+                  text = data.decode("utf-8", "replace")
+                  replaced = True
+              files.append({"path": rel, "size": len(data), "text": text,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "replaced": replaced})
+
+          if not files:
+              sys.exit("не выбрано ни одного файла — проверь mode/paths")
+
+          files.sort(key=lambda f: f["path"])
+
+          # Fence длиннее самой длинной серии бэктиков в содержимом
+          def fence(text):
+              longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+              return "`" * max(3, longest + 1)
+
+          for f in files:
+              head = f"## {f['path']} (размер: {f['size']} bytes"
+              if WITH_HASHES:
+                  head += f", sha256: {f['sha256'][:12]}"
+              head += ")"
+              if f["replaced"]:
+                  head += " — не-UTF-8 символы заменены на U+FFFD"
+              fx = fence(f["text"])
+              f["section"] = f"{head}\n{fx}\n{f['text']}\n{fx}\n"
+
+          # Упаковка: файл не делится между частями; часть <= MAX_PART символов
+          buckets = []
+          cur, cur_len = [], 0
+          for f in files:
+              if cur and cur_len + len(f["section"]) > MAX_PART:
+                  buckets.append(cur)
+                  cur, cur_len = [], 0
+              cur.append(f)
+              cur_len += len(f["section"])
+          if cur:
+              buckets.append(cur)
+
+          n = len(buckets)
+          pad = len(str(n))
+          for i, bucket in enumerate(buckets, 1):
+              for f in bucket:
+                  f["part"] = i
+
+          total_bytes = sum(f["size"] for f in files)
+          mode_line = f"режим: {MODE}" + (f" · paths: {PATHS}" if PATHS else "")
+
+          manifest_md = [
+              "# Манифест экспорта",
+              f"commit: {COMMIT} · branch: {BRANCH} · {mode_line}",
+              f"сгенерировано: {STAMP} · лимит части: {MAX_PART} символов",
+              "",
+              f"Частей: {n} · файлов: {len(files)} · суммарно байт: {total_bytes}",
+              "",
+              "| часть | файл | bytes | sha256 |",
+              "| --- | --- | --- | --- |",
+          ]
+          for f in files:
+              digest = f["sha256"][:12] if WITH_HASHES else "—"
+              manifest_md.append(f"| {f['part']}/{n} | {f['path']} | {f['size']} | {digest} |")
+          manifest_md = "\n".join(manifest_md) + "\n"
+
+          manifest = {
+              "commit": COMMIT, "branch": BRANCH, "mode": MODE, "paths": PATHS,
+              "max_part_chars": MAX_PART, "generated": STAMP,
+              "parts": [
+                  {"file": f"export-part-{str(i).zfill(pad)}-of-{str(n).zfill(pad)}.md",
+                   "files": [f["path"] for f in bucket]}
+                  for i, bucket in enumerate(buckets, 1)
+              ],
+              "files": [
+                  {"path": f["path"], "size": f["size"], "part": f["part"],
+                   "sha256": f["sha256"]}
+                  for f in files
+              ],
+          }
+
+          out_dir = Path("export")
+          out_dir.mkdir(exist_ok=True)
+          (out_dir / "export-manifest.md").write_text(manifest_md, encoding="utf-8")
+          (out_dir / "export-manifest.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8")
+
+          for i, bucket in enumerate(buckets, 1):
+              fname = f"export-part-{str(i).zfill(pad)}-of-{str(n).zfill(pad)}.md"
+              head = [
+                  f"# Code Export — часть {i}/{n}",
+                  f"commit: {COMMIT} · branch: {BRANCH} · {mode_line}",
+                  f"сгенерировано: {STAMP}",
+                  "",
+                  "Файлы в этой части:",
+              ]
+              head += [f"- {f['path']} ({f['size']} bytes)" for f in bucket]
+              head.append("")
+              text = "\n".join(head) + "".join(f["section"] for f in bucket)
+              if i == n:
+                  text += manifest_md + "\n"
+              text += f"--- END OF PART {i}/{n} ---\n"
+              (out_dir / fname).write_text(text, encoding="utf-8")
+
+          print(f"экспорт: {n} частей · {len(files)} файлов · {total_bytes} байт · {mode_line}")
+          for i, bucket in enumerate(buckets, 1):
+              chars = sum(len(f["section"]) for f in bucket)
+              over = "  ⚠ превышает лимит (один файл больше MAX_PART)" if chars > MAX_PART else ""
+              print(f"  часть {i}/{n}: {len(bucket)} файлов, {chars} символов{over}")
+          print("манифест: export-manifest.md / export-manifest.json")
+          PYEOF
+
+      - name: Upload export
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-export-${{ inputs.mode }}
+          path: export/
+          retention-days: 30
+          if-no-files-found: error
