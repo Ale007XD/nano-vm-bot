@@ -1,0 +1,150 @@
+name: Project Snapshot for LLM
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # история не нужна — снимаем только HEAD
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y tree
+
+      - name: Generate tree.json
+        run: tree -I '.git|node_modules|dist|build|*.log' -a -J > tree.json
+
+      - name: Generate snapshot (JSON + MD)
+        env:
+          SNAPSHOT_COMMIT: ${{ github.sha }}
+          SNAPSHOT_BRANCH: ${{ github.ref_name }}
+          MAX_FILE_SIZE: "1048576"  # байт; свыше — содержимое не включается
+        run: |
+          python3 - <<'PYEOF'
+          import base64
+          import json
+          import os
+          import re
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", "1048576"))
+          TEXT_EXTS = {".py", ".js", ".ts", ".json", ".md", ".txt",
+                       ".yml", ".yaml", ".sh", ".toml"}
+          # Собственные артефакты исключаем, иначе снапшот вкладывается сам в себя
+          SELF_OUTPUTS = {"project-snapshot.json", "project-snapshot.md", "tree.json"}
+          EXCLUDED = "[File excluded or too large]"
+
+          def git(*args):
+              return subprocess.run(["git", *args], capture_output=True,
+                                    text=True, check=True).stdout.strip()
+
+          commit = os.environ.get("SNAPSHOT_COMMIT") or git("rev-parse", "HEAD")
+          branch = os.environ.get("SNAPSHOT_BRANCH") or git("branch", "--show-current")
+
+          # -z: null-разделитель — имена с пробелами/кавычками не ломают разбор
+          out = subprocess.run(["git", "ls-files", "-z"],
+                               capture_output=True, check=True).stdout
+
+          entries = []
+          for raw_path in out.split(b"\0"):
+              if not raw_path:
+                  continue
+              try:
+                  rel = raw_path.decode("utf-8")
+              except UnicodeDecodeError:
+                  print("skip (non-UTF-8 name):", raw_path)
+                  continue
+              if rel in SELF_OUTPUTS:
+                  continue
+              p = Path(rel)
+              try:
+                  if not p.is_file():
+                      continue
+                  size = p.stat().st_size
+                  is_text = p.name == "Dockerfile" or p.suffix.lower() in TEXT_EXTS
+                  if is_text and size <= MAX_FILE_SIZE:
+                      content = base64.b64encode(p.read_bytes()).decode("ascii")
+                  else:
+                      content = EXCLUDED
+              except OSError as exc:
+                  print(f"skip {rel}: {exc}")
+                  continue
+              entries.append({"path": rel, "size": size, "content": content})
+
+          snapshot = {"commit": commit, "branch": branch, "files": entries}
+          tmp = Path("project-snapshot.json.tmp")
+          tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
+                         encoding="utf-8")
+          os.replace(tmp, "project-snapshot.json")
+
+          # MD: fence длиннее самой длинной серии бэктиков в содержимом,
+          # иначе вложенные ``` ломают структуру документа
+          def fence(text):
+              longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+              return "`" * max(3, longest + 1)
+
+          tree_out = subprocess.run(
+              ["tree", "-I", ".git|node_modules|dist|build|*.log", "-a"],
+              capture_output=True, text=True, check=True,
+          ).stdout
+
+          md = [
+              "# Полный снапшот проекта для LLM",
+              f"## Commit: {commit}",
+              f"## Branch: {branch}",
+              f"## Дата: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+              f"## Файлов: {len(entries)}",
+              "",
+              "```",
+              tree_out.rstrip("\n"),
+              "```",
+              "",
+          ]
+          for e in entries:
+              header = f"## {e['path']} (размер: {e['size']} bytes)"
+              if e["content"] == EXCLUDED:
+                  md.append(f"{header} — {EXCLUDED}")
+                  continue
+              body = base64.b64decode(e["content"]).decode("utf-8", "replace")
+              f = fence(body)
+              md += [header, f, body, f, ""]
+
+          tmp = Path("project-snapshot.md.tmp")
+          tmp.write_text("\n".join(md) + "\n", encoding="utf-8")
+          os.replace(tmp, "project-snapshot.md")
+
+          n_content = sum(1 for e in entries if e["content"] != EXCLUDED)
+          print(f"snapshot: {len(entries)} files, {n_content} with content, "
+                f"{len(entries) - n_content} excluded, commit {commit[:12]}")
+          PYEOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-snapshot-${{ github.sha }}
+          path: |
+            project-snapshot.json
+            project-snapshot.md
+            tree.json
+          retention-days: 90
+          if-no-files-found: error
