@@ -49,10 +49,17 @@ class MultiProviderLLMAdapter:
             messages.append(Message(role="system", content=effective_system))
         messages.append(Message(role="user", content=prompt))
 
+        # Planner должен вернуть JSON-программу: на Groq включаем json_object
+        # и medium-усилие рассуждения (groq-only, остальные провайдеры игнорируют)
+        response_format = {"type": "json_object"} if role == "planner" else None
+        reasoning_effort = "medium" if role == "planner" else None
+
         response = await self._client.chat(
             messages=messages,
             model=effective_model,
             tools=tools,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
         )
 
         if isinstance(response, dict):

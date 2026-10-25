@@ -6,12 +6,13 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.llm_client_v2 import Message, llm_client
 from app.core.memory import vector_memory
 from app.core.web_search import web_search
+from app.utils.helpers import current_datetime_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,10 @@ class PlanBotAgent:
         self.name = "planbot"
         self.display_name = "🧩 PlanBot"
         self.description = "Smart planner with multi-step reasoning"
+        # Промпт можно переопределить через .env (PLANBOT_SYSTEM_PROMPT)
+        env_prompt = getattr(settings, "PLANBOT_SYSTEM_PROMPT", "")
+        if isinstance(env_prompt, str) and env_prompt.strip():
+            self.SYSTEM_PROMPT = env_prompt
     
     # Keywords that trigger web search
     WEB_SEARCH_TRIGGERS = [
@@ -92,23 +97,37 @@ class PlanBotAgent:
         self,
         user_id: int,
         message: str,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        on_status: Optional[Callable[[str], Any]] = None
     ) -> str:
         """
-        Process message with planning and verification
+        Process message with planning and verification.
+
+        on_status — опциональный async-callback со стадией выполнения
+        («Составляю план…», «Выполняю шаг 2/5»…), для прогресс-сообщения.
         """
         try:
             # First, check if this needs multi-step processing
             if self._needs_planning(message):
-                return await self._process_with_planning(user_id, message, conversation_history)
+                return await self._process_with_planning(
+                    user_id, message, conversation_history, on_status
+                )
             else:
                 # Simple query, use direct response
                 return await self._direct_response(user_id, message, conversation_history)
-                
+
         except Exception as e:
             logger.error(f"PlanBot error: {e}")
             return "⚠️ Произошла ошибка во время обработки. Пожалуйста, попробуйте снова."
-    
+
+    async def _report(self, on_status, text: str) -> None:
+        if on_status is None:
+            return
+        try:
+            await on_status(text)
+        except Exception as e:
+            logger.debug(f"on_status callback failed: {e}")
+
     def _needs_planning(self, message: str) -> bool:
         """Determine if message requires multi-step planning"""
         planning_keywords = [
@@ -116,18 +135,19 @@ class PlanBotAgent:
             'evaluate', 'strategy', 'roadmap', 'steps', 'process',
             'how to', 'what are the steps', 'help me plan'
         ]
-        
+
         message_lower = message.lower()
         return any(keyword in message_lower for keyword in planning_keywords)
-    
+
     async def _process_with_planning(
         self,
         user_id: int,
         message: str,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        on_status: Optional[Callable[[str], Any]] = None
     ) -> str:
         """Process with full planning and verification"""
-        
+
         # Step 0: Search web for current information if needed
         web_context = ""
         if self._should_search_web(message):
@@ -139,28 +159,32 @@ class PlanBotAgent:
                 )
             except Exception as e:
                 logger.warning(f"Web search failed: {e}")
-        
+
         # Step 1: Create a plan (with web context if available)
+        await self._report(on_status, "🧩 Составляю план…")
         plan = await self._create_plan(message, user_id, web_context)
-        
+
         # Step 2: Execute and verify each step
+        total = max(len(plan.steps), 1)
         results = []
-        for step in plan.steps:
+        for idx, step in enumerate(plan.steps, start=1):
             step.status = "in_progress"
-            
+            await self._report(on_status, f"⚙️ Выполняю шаг {idx} из {total}…")
+
             # Execute step
             step_result = await self._execute_step(step, user_id, message)
             step.result = step_result
             step.status = "completed"
             results.append(f"{step.number}. {step.description}\n   → {step_result}")
-        
+
         plan.verified = True
-        
+
         # Step 3: Generate final comprehensive answer
+        await self._report(on_status, "📝 Формирую итоговый ответ…")
         final_answer = await self._generate_final_answer(
             message, plan, results, user_id
         )
-        
+
         return final_answer
     
     async def _create_plan(self, goal: str, user_id: int, web_context: str = "") -> ExecutionPlan:
@@ -168,9 +192,9 @@ class PlanBotAgent:
         
         # Get relevant memories
         memories = await vector_memory.search_memories(goal, user_id, n_results=3)
-        context = ""
+        context = current_datetime_prompt()
         if memories:
-            context = "Контекст пользователя:\n" + "\n".join([f"- {m['content']}" for m in memories])
+            context += "\nКонтекст пользователя:\n" + "\n".join([f"- {m['content']}" for m in memories])
         
         # Add web search context if available
         if web_context:
@@ -198,7 +222,8 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANBOT_MODEL
+            model=settings.PLANBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         try:
@@ -232,7 +257,8 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANBOT_MODEL
+            model=settings.PLANBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         return response.content
@@ -267,7 +293,8 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANBOT_MODEL
+            model=settings.PLANBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         # Add header showing it was processed by Claudbot
@@ -283,9 +310,12 @@ class PlanBotAgent:
         conversation_history: Optional[List[Dict]] = None
     ) -> str:
         """Direct response without full planning"""
-        
-        messages = [Message(role="system", content=self.SYSTEM_PROMPT)]
-        
+
+        messages = [
+            Message(role="system", content=self.SYSTEM_PROMPT),
+            Message(role="system", content=current_datetime_prompt()),
+        ]
+
         # Check if web search is needed
         search_results_text = ""
         if self._should_search_web(message):
@@ -325,7 +355,8 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANBOT_MODEL
+            model=settings.PLANBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         return f"🧩 <b>PlanBot</b>\n\n{response.content}"
@@ -353,7 +384,8 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANBOT_MODEL
+            model=settings.PLANBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         try:

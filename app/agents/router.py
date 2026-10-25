@@ -28,17 +28,19 @@ class AgentRouter:
         user_id: int,
         message: str,
         agent_mode: Optional[str] = None,
-        conversation_history: Optional[list] = None
+        conversation_history: Optional[list] = None,
+        on_status: Optional[Any] = None
     ) -> str:
         """
         Route message to appropriate agent
-        
+
         Args:
             user_id: User's Telegram ID
             message: User's message
             agent_mode: Force specific agent mode (optional)
             conversation_history: Previous messages
-            
+            on_status: async-callback стадий выполнения (поддерживает PlanBot)
+
         Returns:
             Agent's response
         """
@@ -52,11 +54,19 @@ class AgentRouter:
         
         # Process through agent
         try:
-            response = await agent.process_message(
-                user_id=user_id,
-                message=message,
-                conversation_history=conversation_history
-            )
+            if on_status is not None and getattr(agent, "name", "") == "planbot":
+                response = await agent.process_message(
+                    user_id=user_id,
+                    message=message,
+                    conversation_history=conversation_history,
+                    on_status=on_status
+                )
+            else:
+                response = await agent.process_message(
+                    user_id=user_id,
+                    message=message,
+                    conversation_history=conversation_history
+                )
             return response
         except Exception as e:
             logger.error(f"Agent {agent.name} failed: {e}")

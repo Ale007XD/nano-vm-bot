@@ -29,7 +29,7 @@ from app.runtime import (
 )
 from app.runtime.planner import Planner
 from app.runtime.tool_registry import ToolRegistry
-from app.utils.helpers import sanitize_html
+from app.utils.helpers import sanitize_html, start_typing, stop_typing
 
 _vm_registry = default_registry()
 _vm = ExecutionVM(_vm_registry)
@@ -95,6 +95,8 @@ async def handle_message(message: Message, state: FSMContext):
             ]
 
             await message.bot.send_chat_action(message.chat.id, "typing")
+            # typing живёт ~5 секунд — продлеваем, пока идёт обработка
+            typing_task = start_typing(message.bot, message.chat.id)
 
             # --- YouTube автодетект ---
             user_message_for_agent = user_message
@@ -190,12 +192,32 @@ async def handle_message(message: Message, state: FSMContext):
                 ) or "⚠️ Runtime: пустой outbox."
             # --- Legacy branch (fastbot / planbot / skillbot) ---
             else:
+                status_msg = None
+                on_status = None
+                if agent_mode == "planbot":
+                    status_msg = await message.answer("🧩 Анализирую задачу…")
+
+                    async def on_status(status_text: str):
+                        try:
+                            await status_msg.edit_text(f"<i>{sanitize_html(status_text)}</i>")
+                        except Exception:
+                            pass
+
                 response = await agent_router.route_message(
                     user_id=user.id,
                     message=user_message_for_agent,
                     agent_mode=agent_mode,
                     conversation_history=conversation_history,
+                    on_status=on_status,
                 )
+
+                if status_msg is not None:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+
+            stop_typing(typing_task)
 
             await save_message(
                 session,
@@ -226,6 +248,10 @@ async def handle_message(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error handling message: {e}")
+        try:
+            stop_typing(typing_task)
+        except Exception:
+            pass
         await message.answer(
             "⚠️ <b>Извините, произошла ошибка при обработке вашего сообщения.</b>\n\n"
             "Пожалуйста, попробуйте снова или используйте /help для помощи."
@@ -445,6 +471,8 @@ async def handle_voice(message: Message, state: FSMContext):
             return
 
         await message.bot.send_chat_action(message.chat.id, "typing")
+        # typing живёт ~5 секунд — продлеваем на всё время обработки
+        typing_task = start_typing(message.bot, message.chat.id)
 
         voice_file = await message.bot.get_file(voice.file_id)
         file_path = os.path.join(temp_dir, f"voice_{user.id}_{voice.file_id}.ogg")
@@ -568,12 +596,32 @@ async def handle_voice(message: Message, state: FSMContext):
                     entry.text for entry in run_result.outbox
                 ) or "⚠️ Runtime: пустой outbox."
             else:
+                status_msg = None
+                on_status = None
+                if agent_mode == "planbot":
+                    status_msg = await message.answer("🧩 Анализирую задачу…")
+
+                    async def on_status(status_text: str):
+                        try:
+                            await status_msg.edit_text(f"<i>{sanitize_html(status_text)}</i>")
+                        except Exception:
+                            pass
+
                 response = await agent_router.route_message(
                     user_id=user.id,
                     message=transcribed_text,
                     agent_mode=agent_mode,
-                    conversation_history=conversation_history
+                    conversation_history=conversation_history,
+                    on_status=on_status,
                 )
+
+                if status_msg is not None:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+
+            stop_typing(typing_task)
 
             await save_message(
                 session,
@@ -604,6 +652,10 @@ async def handle_voice(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error handling voice message: {e}")
+        try:
+            stop_typing(typing_task)
+        except Exception:
+            pass
         await message.answer(
             "⚠️ <b>Ошибка обработки голосового сообщения.</b>\n\n"
             "Пожалуйста, попробуйте снова."

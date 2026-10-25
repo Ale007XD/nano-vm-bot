@@ -1,6 +1,7 @@
 """
 Utility functions
 """
+import asyncio
 import re
 from datetime import datetime, timedelta
 from typing import Optional
@@ -186,3 +187,64 @@ def format_memory(memory) -> str:
         text += "..."
 
     return text
+
+
+# ---------------------------------------------------------------------------
+# Индикатор «печатает…» и контекст текущего времени
+# ---------------------------------------------------------------------------
+
+async def _typing_loop(bot, chat_id: int, interval: float = 4.0, max_seconds: float = 180.0):
+    # Telegram гасит chat action через ~5 секунд — для долгих ответов
+    # (фоллбэк LLM, веб-поиск, планирование) индикатор нужно продлевать.
+    # max_seconds — страховка от утечки задачи, если cancel по какой-то
+    # причине не вызвали.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_seconds
+    while loop.time() < deadline:
+        try:
+            await bot.send_chat_action(chat_id, "typing")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
+
+
+def start_typing(bot, chat_id: int, interval: float = 4.0):
+    """Запустить фоновое продление «печатает…». Вернуть задачу для stop_typing."""
+    return asyncio.create_task(_typing_loop(bot, chat_id, interval))
+
+
+def stop_typing(task) -> None:
+    """Остановить продление индикатора (безопасно для уже завершённой задачи)."""
+    if task is not None:
+        task.cancel()
+
+
+_WEEKDAYS_RU = (
+    "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье",
+)
+
+
+def _resolve_zone(tz_name: str):
+    """ZoneInfo (stdlib) с fallback на pytz — на случай контейнера без системной tzdata."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(tz_name)
+    except Exception:
+        from pytz import timezone
+
+        return timezone(tz_name)
+
+
+def current_datetime_prompt(tz_name: Optional[str] = None) -> str:
+    """System-строка с текущими датой/временем — у LLM нет собственных часов."""
+    from app.core.config import settings
+
+    tz_name = tz_name or settings.BOT_TIMEZONE
+    now = datetime.now(_resolve_zone(tz_name))
+    return (
+        f"Текущие дата и время: {_WEEKDAYS_RU[now.weekday()]}, "
+        f"{now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')} ({tz_name})."
+    )

@@ -166,6 +166,18 @@ class Planner:
     def __init__(self, llm: LLMProtocol):
         self._llm = llm
 
+    def _system_prompt(self) -> str:
+        """Промпт из .env (PLANNER_SYSTEM_PROMPT), иначе встроенный."""
+        try:
+            from app.core.config import settings
+
+            env_prompt = getattr(settings, "PLANNER_SYSTEM_PROMPT", "")
+        except Exception:
+            env_prompt = ""
+        if isinstance(env_prompt, str) and env_prompt.strip():
+            return env_prompt
+        return _PLANNER_SYSTEM
+
     async def generate(
         self,
         user_input: str,
@@ -187,7 +199,7 @@ class Planner:
             raw_result = await self._llm.generate(
                 prompt=prompt,
                 role="planner",
-                system=_PLANNER_SYSTEM,
+                system=self._system_prompt(),
             )
             raw = raw_result[0] if isinstance(raw_result, tuple) else raw_result
             program = self._parse(raw, user_input)

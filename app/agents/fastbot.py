@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.llm_client_v2 import Message, llm_client
 from app.core.memory import vector_memory
 from app.core.web_search import web_search
+from app.utils.helpers import current_datetime_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,10 @@ class FastBotAgent:
         self.name = "fastbot"
         self.display_name = "⚡ FastBot"
         self.description = "Quick universal assistant for everyday tasks"
+        # Промпт можно переопределить через .env (FASTBOT_SYSTEM_PROMPT)
+        env_prompt = getattr(settings, "FASTBOT_SYSTEM_PROMPT", "")
+        if isinstance(env_prompt, str) and env_prompt.strip():
+            self.SYSTEM_PROMPT = env_prompt
 
     # Keywords that trigger web search
     WEB_SEARCH_TRIGGERS = [
@@ -87,7 +92,11 @@ class FastBotAgent:
         conversation_history: Optional[List[Dict]] = None
     ) -> str:
         try:
-            messages = [Message(role="system", content=self.SYSTEM_PROMPT)]
+            messages = [
+                Message(role="system", content=self.SYSTEM_PROMPT),
+                # У LLM нет часов — без этого модель выдумывает дату
+                Message(role="system", content=current_datetime_prompt()),
+            ]
 
             # Web search
             search_results_text = ""
@@ -135,7 +144,8 @@ class FastBotAgent:
 
             response = await llm_client.chat_with_fallback(
                 messages,
-                model=settings.FASTBOT_MODEL
+                model=settings.FASTBOT_MODEL,
+                reasoning_effort="low"
             )
 
             return response.content

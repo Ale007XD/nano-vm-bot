@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.llm_client_v2 import Message, llm_client
 from app.core.memory import vector_memory
 from app.core.skills_loader import skill_loader
+from app.utils.helpers import current_datetime_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ class SkillBotAgent:
         self.name = "skillbot"
         self.display_name = "🔧 SkillBot"
         self.description = "Skills manager and catalog"
+        # Промпт можно переопределить через .env (SKILLBOT_SYSTEM_PROMPT)
+        env_prompt = getattr(settings, "SKILLBOT_SYSTEM_PROMPT", "")
+        if isinstance(env_prompt, str) and env_prompt.strip():
+            self.SYSTEM_PROMPT = env_prompt
     
     async def process_message(
         self,
@@ -128,7 +133,8 @@ class SkillBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.SKILLBOT_MODEL
+            model=settings.SKILLBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         try:
@@ -221,7 +227,8 @@ def setup_handlers():
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.SKILLBOT_MODEL
+            model=settings.SKILLBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         # Extract code from response
@@ -335,7 +342,10 @@ def setup_handlers():
     async def _general_response(self, message: str, user_id: int) -> str:
         """General skill-related response with RAG context"""
 
-        messages = [Message(role="system", content=self.SYSTEM_PROMPT)]
+        messages = [
+            Message(role="system", content=self.SYSTEM_PROMPT),
+            Message(role="system", content=current_datetime_prompt()),
+        ]
 
         # RAG: личные заметки
         memories = await vector_memory.search_memories(message, user_id, n_results=3)
@@ -355,7 +365,10 @@ def setup_handlers():
 
         messages.append(Message(role="user", content=message))
 
-        response = await llm_client.chat_with_fallback(messages)
+        response = await llm_client.chat_with_fallback(
+            messages,
+            reasoning_effort="medium"
+        )
 
         return f"🔧 <b>SkillBot</b>\n\n{response.content}"
     
@@ -381,7 +394,8 @@ Respond with JSON:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.SKILLBOT_MODEL
+            model=settings.SKILLBOT_MODEL,
+            reasoning_effort="medium"
         )
         
         try:

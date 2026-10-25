@@ -391,11 +391,16 @@ class MultiProviderLLMClient:
         max_tokens: Optional[int] = None,
         stream: bool = False,
         max_attempts: int = 3,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None
     ) -> Union[LLMResponse, Dict[str, Any]]:
         """Send chat request with automatic fallback across providers.
         If tools provided, returns Dict with 'text' and optional 'tool_calls'.
-        Otherwise returns LLMResponse for backward compatibility."""
+        Otherwise returns LLMResponse for backward compatibility.
+
+        response_format / reasoning_effort применяются только на Groq
+        (проверенная поддержка; фоллбэк-провайдеры их игнорируют)."""
 
         self._start_health_monitor()
 
@@ -427,7 +432,9 @@ class MultiProviderLLMClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=stream,
-                        tools=tools
+                        tools=tools,
+                        response_format=response_format,
+                        reasoning_effort=reasoning_effort
                     )
 
                     response_time = (time.time() - start_time) * 1000
@@ -480,6 +487,7 @@ class MultiProviderLLMClient:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> "LLMResponse":
         """
         Semantic alias for chat().
@@ -491,6 +499,7 @@ class MultiProviderLLMClient:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
 
     async def check_health(self) -> None:
@@ -534,7 +543,9 @@ class MultiProviderLLMClient:
         temperature: float,
         max_tokens: int,
         stream: bool = False,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None
     ) -> Dict:
         """Route request to provider-specific implementation"""
         if provider.name == "anthropic":
@@ -543,7 +554,8 @@ class MultiProviderLLMClient:
             )
         else:
             return await self._make_openai_compatible_request(
-                provider, messages, model, temperature, max_tokens, stream, tools
+                provider, messages, model, temperature, max_tokens, stream,
+                tools, response_format, reasoning_effort
             )
 
     async def _make_openai_compatible_request(
@@ -554,7 +566,9 @@ class MultiProviderLLMClient:
         temperature: float,
         max_tokens: int,
         stream: bool = False,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None
     ) -> Dict:
         """OpenAI-compatible endpoint (Groq, OpenRouter, OpenAI)"""
         headers = {
@@ -575,6 +589,14 @@ class MultiProviderLLMClient:
         if tools:
             payload["tools"] = [{"type": "function", "function": tool_schema} for tool_schema in tools]
             payload["tool_choice"] = "auto"
+
+        # response_format и reasoning_effort поддерживает Groq;
+        # остальным провайдерам их не отправляем
+        if provider.name == "groq":
+            if response_format:
+                payload["response_format"] = response_format
+            if reasoning_effort and model.startswith("openai/gpt-oss"):
+                payload["reasoning_effort"] = reasoning_effort
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -811,7 +833,7 @@ class MultiProviderLLMClient:
             raise Exception("No provider with Whisper support available")
 
         provider = whisper_providers[0]
-        model = model or "whisper-large-v3"
+        model = model or settings.WHISPER_MODEL or "whisper-large-v3"
 
         async with aiofiles.open(audio_file_path, 'rb') as f:
             audio_data = await f.read()

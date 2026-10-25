@@ -3,7 +3,9 @@
     sanitize_html (BUG-12) — экранирование и балансировка Telegram HTML
     crypto (BUG-14)        — источник ENCRYPTION_KEY
     web-search триггеры (BUG-19) — границы слов
+    typing / текущее время — UX-фиксы (индикатор «печатает…», инъекция даты)
 """
+import asyncio
 import sys
 import types
 
@@ -105,3 +107,43 @@ class TestWebSearchTrigger:
         agent = FastBotAgent()
         assert agent._should_search_web("кто такой Пушкин?") is True
         assert agent._should_search_web("найди рецепт борща") is True
+
+
+class TestTypingIndicator:
+    @pytest.mark.asyncio
+    async def test_start_typing_repeats_until_stopped(self):
+        from unittest.mock import AsyncMock
+
+        from app.utils.helpers import start_typing, stop_typing
+
+        bot = AsyncMock()
+        task = start_typing(bot, chat_id=1, interval=0.05)
+        await asyncio.sleep(0.18)
+        stop_typing(task)
+        await asyncio.sleep(0)
+
+        assert bot.send_chat_action.await_count >= 2
+        assert bot.send_chat_action.await_args.args[1] == "typing"
+
+    @pytest.mark.asyncio
+    async def test_stop_typing_is_safe_for_none_and_finished(self):
+        from app.utils.helpers import stop_typing
+
+        stop_typing(None)
+        stop_typing(asyncio.Future())
+
+
+class TestCurrentDatetimePrompt:
+    def test_contains_weekday_time_and_tz(self):
+        import re
+
+        from app.utils.helpers import current_datetime_prompt
+
+        prompt = current_datetime_prompt("Europe/Moscow")
+        assert "Europe/Moscow" in prompt
+        assert any(
+            wd in prompt
+            for wd in ("понедельник", "вторник", "среда", "четверг",
+                       "пятница", "суббота", "воскресенье")
+        )
+        assert re.search(r"\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}", prompt)
