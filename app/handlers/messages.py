@@ -736,3 +736,23 @@ async def handle_voice(message: Message, state: FSMContext):
     finally:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+
+
+@router.message()
+async def handle_unsupported_message(message: Message):
+    """Логирует типы сообщений, которые не обрабатываются (стикеры, видео и т.п.),
+    чтобы «молчаливое» игнорирование было видно в логах."""
+    content_type = (
+        "sticker" if message.sticker
+        else "video" if message.video
+        else "video_note" if message.video_note
+        else "animation" if message.animation
+        else "audio" if message.audio
+        else "contact" if message.contact
+        else "location" if message.location
+        else "unsupported"
+    )
+    logger.info(
+        "Unsupported message type %s from user %s — ignored",
+        content_type, message.from_user.id if message.from_user else None,
+    )
