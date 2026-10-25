@@ -39,32 +39,59 @@ def _extract_url_from_entities(message: Message) -> str | None:
 
 @router.channel_post()
 async def handle_channel_post(message: Message):
-    """Обрабатывает новые посты в отслеживаемых каналах."""
+    """Обрабатывает новые посты в отслеживаемых каналах.
+
+    Пост с URL (в тексте или подписи) → статья в базу знаний + уведомление.
+    Пост с фото и подписью без URL → резюме подписи владельцу.
+    """
     chat_id = message.chat.id
 
     # Проверяем что канал в белом списке
     if settings.KB_CHANNEL_IDS and chat_id not in settings.KB_CHANNEL_IDS:
         return
 
-    # Извлекаем URL: сначала из entities (надёжнее), потом regex из текста
-    text = message.text or message.caption or ""
-    url = _extract_url_from_entities(message) or _extract_url(text)
-
-    if not url:
-        logger.debug(f"Channel post from {chat_id}: no URL, skipping")
-        return
-
-    # Комментарий = весь текст без URL
-    comment = _URL_RE.sub("", text).strip()
-
-    logger.info(f"Channel post from {chat_id}: URL={url}")
-
-    # Добавляем в базу знаний от имени первого admin
     if not settings.ADMIN_IDS:
         logger.warning("KB: KB_CHANNEL_IDS set but ADMIN_IDS is empty — cannot assign user_id")
         return
 
     owner_id = settings.ADMIN_IDS[0]
+
+    # Извлекаем URL: сначала из entities (надёжнее), потом regex из текста
+    text = message.text or message.caption or ""
+    url = _extract_url_from_entities(message) or _extract_url(text)
+
+    # Комментарий = весь текст без URL
+    comment = _URL_RE.sub("", text).strip()
+
+    if not url:
+        # Пост с картинкой и подписью без ссылки — резюме текста подписи
+        if message.photo and comment:
+            logger.info(f"Channel post from {chat_id}: photo with caption, summarizing")
+            try:
+                from app.agents.router import agent_router
+                from app.utils.helpers import sanitize_html, truncate_text
+
+                summary = await agent_router.route_message(
+                    user_id=owner_id,
+                    message=comment,
+                    agent_mode="fastbot",
+                )
+                await message.bot.send_message(
+                    chat_id=owner_id,
+                    text=(
+                        "🖼 <b>Пост с фото в канале</b> (без ссылки) — резюме подписи:\n\n"
+                        + sanitize_html(truncate_text(summary, 3500))
+                    ),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning(f"Channel photo caption summary failed: {e}")
+        else:
+            logger.debug(f"Channel post from {chat_id}: no URL, skipping")
+        return
+
+    logger.info(f"Channel post from {chat_id}: URL={url}")
 
     try:
         from app.core.skills_loader import skill_loader

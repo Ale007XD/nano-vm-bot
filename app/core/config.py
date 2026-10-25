@@ -318,8 +318,8 @@ class Settings(BaseSettings):
         description="Model for FastBot (conversations/RAG)"
     )
     VISION_MODEL: str = Field(
-        default="meta-llama/llama-4-scout-17b-16e-instruct",
-        description="Model for vision tasks (must be a Groq vision model ID)"
+        default="qwen/qwen3.8-27b",
+        description="Model for vision tasks (must be a Groq multimodal model ID)"
     )
     SKILLBOT_MODEL: str = Field(
         default="openai/gpt-oss-20b",

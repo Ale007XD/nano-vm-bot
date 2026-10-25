@@ -258,17 +258,80 @@ async def handle_message(message: Message, state: FSMContext):
         )
 
 
+async def _deliver_summary(processing_msg, text: str):
+    """Заменить статусное сообщение итоговым текстом (учитывая лимит 4096)."""
+    text = sanitize_html(text)
+    if len(text) > 4000:
+        await processing_msg.delete()
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await processing_msg.answer(chunk)
+            else:
+                await processing_msg.answer(f"<i>(продолжение {i+1}/{len(chunks)})</i>\n\n{chunk}")
+    else:
+        await processing_msg.edit_text(text)
+
+
 @router.message(F.photo)
 async def handle_photo(message: Message):
-    """Handle photo messages — analyze with vision model + optional self-check"""
+    """Handle photo messages.
+
+    Пересланное фото с подписью: резюме текста и ссылок из подписи
+    (база знаний / агент) — картинка для этого не нужна. Фото без подписи —
+    анализ изображением через vision-модель Groq.
+    """
     user = message.from_user
 
     if user.id not in get_allowed_users():
         await message.answer("⛔ Доступ запрещен")
         return
 
-    processing_msg = await message.answer("🔍 Анализирую изображение...")
+    processing_msg = await message.answer("🔍 Обрабатываю…")
 
+    caption = (message.caption or "").strip()
+
+    # --- Пересланное фото с подписью: резюме контента подписи ---
+    if caption:
+        typing_task = start_typing(message.bot, message.chat.id)
+        try:
+            caption_url_m = re.search(r'https?://[^\s\]\)>"\']+', caption)
+            if caption_url_m:
+                kb_skill = skill_loader.get_skill("knowledge_base")
+                if kb_skill:
+                    await processing_msg.edit_text("🔗 Забираю статью по ссылке и делаю резюме…")
+                    try:
+                        kb_result = await kb_skill({
+                            "user_id": user.id,
+                            "message_text": caption,
+                            "args": {"url": caption_url_m.group(0).rstrip(".,;)")},
+                        })
+                        await _deliver_summary(processing_msg, kb_result)
+                        return
+                    except Exception as e:
+                        logger.warning(f"KB summary for photo caption failed: {e}")
+
+            # Подпись без ссылки (или KB не справился) — резюме текста агентом
+            await processing_msg.edit_text("📝 Делаю резюме подписи…")
+            from app.handlers.commands import get_user_agent_mode
+
+            agent_mode = await get_user_agent_mode(user.id)
+            response = await agent_router.route_message(
+                user_id=user.id,
+                message=caption,
+                agent_mode=agent_mode,
+            )
+            await _deliver_summary(processing_msg, response)
+        except Exception as e:
+            logger.error(f"Caption summary failed: {e}")
+            await processing_msg.edit_text(
+                "⚠️ <b>Не удалось сделать резюме подписи.</b> Попробуйте позже."
+            )
+        finally:
+            stop_typing(typing_task)
+        return
+
+    # --- Фото без подписи — vision-анализ ---
     try:
         if not settings.GROQ_API_KEY:
             await processing_msg.edit_text(
@@ -289,7 +352,7 @@ async def handle_photo(message: Message):
             image_data = dl_resp.content
 
         image_b64 = base64.b64encode(image_data).decode("utf-8")
-        user_prompt = message.caption or "Подробно опиши что изображено на фото. Отвечай на русском языке."
+        user_prompt = "Подробно опиши что изображено на фото. Отвечай на русском языке."
 
         headers = {
             "Authorization": f"Bearer {settings.GROQ_API_KEY}",
@@ -326,7 +389,10 @@ async def handle_photo(message: Message):
                 json=make_vision_payload(user_prompt),
                 timeout=30.0
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise Exception(
+                    f"Groq vision error {resp.status_code}: {resp.text[:300]}"
+                )
             result = resp.json()["choices"][0]["message"]["content"]
 
         # Self-check — только для поисковых/идентификационных запросов
@@ -356,21 +422,28 @@ async def handle_photo(message: Message):
                     json=make_vision_payload(verify_prompt, temperature=0.3),
                     timeout=30.0
                 )
-                check_resp.raise_for_status()
+                if check_resp.status_code >= 400:
+                    raise Exception(
+                        f"Groq vision error {check_resp.status_code}: {check_resp.text[:300]}"
+                    )
                 final_result = check_resp.json()["choices"][0]["message"]["content"]
 
-            await processing_msg.edit_text(
-                f"🖼 <b>Анализ изображения:</b>\n\n{final_result}"
+            await _deliver_summary(
+                processing_msg, f"🖼 <b>Анализ изображения:</b>\n\n{final_result}"
             )
         else:
-            await processing_msg.edit_text(
-                f"🖼 <b>Анализ изображения:</b>\n\n{result}"
+            await _deliver_summary(
+                processing_msg, f"🖼 <b>Анализ изображения:</b>\n\n{result}"
             )
 
     except Exception as e:
         logger.error(f"Error analyzing photo: {e}")
         await processing_msg.edit_text(
-            f"❌ <b>Не удалось проанализировать изображение</b>\n\n<code>{e}</code>"
+            "❌ <b>Не удалось проанализировать изображение</b>\n\n"
+            "Скорее всего модель из <code>VISION_MODEL</code> недоступна вашему ключу Groq. "
+            "Проверьте список: <code>curl https://api.groq.com/openai/v1/models "
+            "-H \"Authorization: Bearer $GROQ_API_KEY\"</code> "
+            "и пропишите доступную vision-модель в .env."
         )
 
 
