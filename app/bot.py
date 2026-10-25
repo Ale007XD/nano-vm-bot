@@ -103,6 +103,12 @@ async def on_startup(bot: Bot):
         ("daily", "Create daily task"),
         ("weekly", "Create weekly task"),
         ("providers", "Manage LLM providers (admin only)"),
+        ("usage", "Your LLM token usage today"),
+        ("limits", "Show daily limits (admin only)"),
+        ("setlimit", "Set daily limit: messages|requests|tokens N (admin only)"),
+        ("ban", "Block user by id (admin only)"),
+        ("unban", "Unblock user by id (admin only)"),
+        ("users", "Users activity today (admin only)"),
     ]
     
     from aiogram.types import BotCommand

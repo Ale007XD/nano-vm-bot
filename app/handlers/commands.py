@@ -8,6 +8,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.core.access import is_admin, user_allowed
 from app.core.config import settings
 from app.core.database import async_session_maker, get_or_create_user
 from app.utils.keyboards import (
@@ -26,18 +27,9 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def get_allowed_users() -> set:
-    """
-    Возвращает актуальный set разрешённых пользователей из settings.ADMIN_IDS.
-    Вызывается при каждой проверке — подхватывает горячие изменения без рестарта.
-    Удалён захардкоженный ALLOWED_USERS = {195351142}.
-    """
-    return set(settings.ADMIN_IDS)
-
-
 async def check_access(message: Message) -> bool:
-    """Check if user is allowed (ADMIN_IDS from settings/DB)"""
-    if message.from_user.id not in get_allowed_users():
+    """Check if user is allowed (open access / ban-list / ADMIN_IDS)."""
+    if not await user_allowed(message.from_user.id):
         await message.answer(
             "⛔ <b>Доступ запрещен</b>\n\n"
             "Этот бот является приватным. У вас нет прав на использование."
@@ -48,7 +40,7 @@ async def check_access(message: Message) -> bool:
 
 async def check_access_callback(callback: CallbackQuery) -> bool:
     """Check access for callback queries"""
-    if callback.from_user.id not in get_allowed_users():
+    if not await user_allowed(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return False
     return True
@@ -493,6 +485,209 @@ async def providers_set(callback: CallbackQuery):
                 provider_name, provider["models"], provider["current_roles"]
             )
         )
+
+
+# ------------------------------------------------------------------ #
+#  /ban, /unban, /users — управление доступом в открытом режиме        #
+# ------------------------------------------------------------------ #
+
+def _parse_target_id(message: Message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].lstrip("-").isdigit():
+        return None
+    return int(args[1])
+
+
+@router.message(Command("ban"))
+async def cmd_ban(message: Message):
+    """Заблокировать пользователя (только admin)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    target = _parse_target_id(message)
+    if target is None:
+        await message.answer("Использование: <code>/ban &lt;telegram_id&gt;</code>")
+        return
+    if is_admin(target):
+        await message.answer("⛔ Администратора забанить нельзя.")
+        return
+
+    from app.core.database import set_user_banned
+
+    await set_user_banned(target, True)
+    await message.answer(f"🚫 Пользователь <code>{target}</code> заблокирован.")
+
+
+@router.message(Command("unban"))
+async def cmd_unban(message: Message):
+    """Разблокировать пользователя (только admin)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    target = _parse_target_id(message)
+    if target is None:
+        await message.answer("Использование: <code>/unban &lt;telegram_id&gt;</code>")
+        return
+
+    from app.core.database import set_user_banned
+
+    await set_user_banned(target, False)
+    await message.answer(f"✅ Пользователь <code>{target}</code> разблокирован.")
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message):
+    """Статистика пользователей за UTC-сутки (только admin)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    from datetime import datetime, timezone
+
+    from sqlalchemy import and_, desc, func, select
+
+    from app.core.database import Message as MessageModel
+    from app.core.database import User
+
+    start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+    async with async_session_maker() as session:
+        total = (
+            await session.execute(select(func.count(User.id)))
+        ).scalar() or 0
+        rows = (
+            await session.execute(
+                select(
+                    User.telegram_id,
+                    User.username,
+                    User.is_banned,
+                    func.count(MessageModel.id),
+                )
+                .outerjoin(
+                    MessageModel,
+                    and_(
+                        MessageModel.user_id == User.id,
+                        MessageModel.role == "user",
+                        MessageModel.created_at >= start,
+                    ),
+                )
+                .group_by(User.id)
+                .order_by(desc(func.count(MessageModel.id)))
+                .limit(20)
+            )
+        ).all()
+
+    if not rows:
+        await message.answer("📭 Пользователей пока нет.")
+        return
+
+    text = f"👥 Пользователей всего: <b>{total}</b>\n"
+    text += "Сообщений за UTC-сутки (топ-20):\n\n"
+    for telegram_id, username, is_banned, count in rows:
+        name = f"@{username}" if username else str(telegram_id)
+        flag = " 🚫" if is_banned else ""
+        text += f"• <code>{telegram_id}</code> {name}{flag} — {count}\n"
+    await message.answer(text)
+
+
+_LIMIT_KINDS = {
+    "messages": "сообщения",
+    "requests": "LLM-запросы",
+    "tokens": "токены",
+}
+
+
+@router.message(Command("limits"))
+async def cmd_limits(message: Message):
+    """Текущие суточные лимиты и расход за сегодня (admin)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+
+    from app.core.access import get_effective_limits
+    from app.core.database import get_bot_setting, get_today_totals
+
+    limits = await get_effective_limits()
+    text = "⚙️ <b>Суточные лимиты (UTC, на пользователя)</b>\n\n"
+    for kind, label in _LIMIT_KINDS.items():
+        raw = None
+        try:
+            raw = await get_bot_setting(f"daily_limit_{kind}")
+        except Exception:
+            pass
+        value = limits[kind]
+        source = "динамический" if raw is not None else "env/дефолт"
+        state = f"<b>{value}</b>" if value > 0 else "безлимит"
+        text += f"• {label}: {state} <i>({source})</i>\n"
+
+    totals = await get_today_totals()
+    text += (
+        f"\n📊 Сегодня по всем: <b>{totals['requests']}</b> LLM-запросов, "
+        f"<b>{totals['total_tokens']}</b> токенов от {totals['users']} пользователей."
+    )
+    text += "\n\nИзменить: <code>/setlimit &lt;messages|requests|tokens&gt; &lt;N&gt;</code> (0 — снять)"
+    await message.answer(text)
+
+
+@router.message(Command("setlimit"))
+async def cmd_setlimit(message: Message):
+    """Задать суточный лимит на лету (admin): /setlimit tokens 100000"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    args = message.text.split()
+    if len(args) != 3 or args[1] not in _LIMIT_KINDS or not args[2].isdigit():
+        await message.answer(
+            "Использование: <code>/setlimit &lt;messages|requests|tokens&gt; &lt;N&gt;</code>\n"
+            "N — число за сутки (0 — снять лимит). Пример: <code>/setlimit tokens 100000</code>"
+        )
+        return
+
+    kind = args[1]
+    value = int(args[2])
+
+    from app.core.database import set_bot_setting
+
+    await set_bot_setting(
+        f"daily_limit_{kind}", str(value), updated_by=message.from_user.id
+    )
+    label = _LIMIT_KINDS[kind]
+    if value > 0:
+        await message.answer(
+            f"✅ Суточный лимит «{label}» установлен: <b>{value}</b> "
+            "(на пользователя, UTC)."
+        )
+    else:
+        await message.answer(f"✅ Суточный лимит «{label}» снят (безлимит).")
+
+
+@router.message(Command("usage"))
+async def cmd_usage(message: Message):
+    """Расход токенов LLM за сегодня (UTC)"""
+    if not await user_allowed(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+
+    from app.core.database import get_today_totals, get_today_usage
+
+    row = await get_today_usage(message.from_user.id)
+    if row is None:
+        mine = "📭 Ваших запросов сегодня ещё не было."
+    else:
+        mine = (
+            f"👤 Вы: <b>{row.requests}</b> запросов, токены: "
+            f"{row.prompt_tokens} вх. + {row.completion_tokens} вых. "
+            f"= <b>{row.total_tokens}</b>"
+        )
+
+    text = f"📊 <b>Расход токенов за сегодня (UTC)</b>\n\n{mine}"
+    if is_admin(message.from_user.id):
+        totals = await get_today_totals()
+        text += (
+            f"\n\n🌐 Все пользователи: <b>{totals['requests']}</b> запросов "
+            f"от {totals['users']} польз., <b>{totals['total_tokens']}</b> токенов"
+        )
+    await message.answer(text)
 
 
 async def get_user_agent_mode(user_id: int) -> str:

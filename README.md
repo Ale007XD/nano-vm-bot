@@ -1,32 +1,46 @@
 # Alex-Nano-Bot
 
-Приватный self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью, базой знаний и multi-provider LLM.
+Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.5.0 (patch 6) · **Готовность к релизу:** ~88%
+**Версия:** 1.6.0 · **Тесты:** 126 passed 🟢 · ruff: clean
 
 ---
 
 ## Возможности
 
-🤖 **Три агента:**
-- ⚡ **FastBot** — быстрый помощник, RAG из переписки
-- 🧩 **PlanBot** — многошаговое рассуждение с верификацией
+🤖 **Три агента + Runtime VM:**
+- ⚡ **FastBot** — быстрый помощник, RAG из переписки и заметок
+- 🧩 **PlanBot** — многошаговое рассуждение с прогресс-стадиями («Составляю план… → Выполняю шаг 2/4 → Формирую ответ»)
 - 🔧 **SkillBot** — менеджер навыков, генерация кода
+- ⚙️ **Runtime VM** — детерминированная Program-driven система δ(S, Program) → S'
 
 ⚙️ **Runtime VM:**
-- Детерминированная Program-driven система δ(S, Program) → S'
-- Planner (llama-3.3-70b) генерирует JSON-программу
+- Planner генерирует JSON-программу (JSON-mode + `reasoning_effort` на Groq)
 - VM исполняет: `call_llm`, `respond`, `store_memory`, `call_tool`
-- Векторная память (ChromaDB): сохранение и RAG-поиск работают
 - Персистентный `StateContext` через `UserState.context`
+- Устойчивость к мусору от LLM: битые шаги/params не роняют прогон
 
-🧠 **Векторная память (RAG):**
-- ChromaDB + fastembed, 8 релевантных записей с датами в контексте
-- `store_memory` через Runtime VM: верифицировано
+🧠 **Векторная память (RAG):** ChromaDB + fastembed, изолирована per-user
 
-📚 **База знаний, голос, планировщик, vision** — без изменений.
+👥 **Мультиюзерность (один админ):**
+- Открытый режим (`BOT_OPEN_ACCESS=true`) — бот отвечает всем
+- Бан-лист: `/ban`, `/unban`
+- Суточные лимиты на пользователя (UTC): сообщения / LLM-запросы / токены
+- Учёт расхода токенов per-user: `/usage` (у админа — тотал по всем)
+- Динамическое управление лимитами: `/setlimit`, `/limits` — без рестарта
 
-🔌 **Multi-provider LLM:** Groq → OpenRouter → Anthropic → OpenAI
+📚 **Контент:**
+- Пересланное фото с подписью: подпись с URL → статья в базу знаний + резюме; подпись без URL → резюме текста; без подписи → vision-анализ (Groq)
+- Посты в отслеживаемых каналах: с URL → в базу знаний; фото + подпись → резюме владельцу
+- Импорт JSON-экспорта Telegram-чата, YouTube-транскрипты, веб-поиск
+
+🛠 **UX:**
+- Индикатор «печатает…» продлевается на всё время обработки
+- Текущие дата/время инжектируются в промпт — модель не галлюцинирует дату
+- Markdown в ответах LLM автоматически конвертируется в Telegram HTML
+- Длинные ответы корректно режутся по лимиту 4096
+
+🔌 **Multi-provider LLM:** Groq → OpenRouter → Anthropic → OpenAI, фоллбэк с ретраями, горячая замена ключей (`/providers`), выбор моделей по ролям (`/models`, персистентно в БД). Тело API-ошибок логируется.
 
 ---
 
@@ -53,8 +67,14 @@ docker compose logs -f
 | `/mode` | Смена агента (FastBot / PlanBot / SkillBot / Runtime VM) |
 | `/skills` | Менеджер навыков |
 | `/memory` | Управление памятью |
-| `/providers` | Управление LLM (admin) |
+| `/providers` | Управление ключами LLM-провайдеров (admin) |
+| `/models` | Выбор моделей по ролям (admin) |
 | `/remind`, `/daily`, `/weekly`, `/tasks` | Планировщик |
+| `/usage` | Ваш расход LLM-токенов за сегодня (UTC) |
+| `/limits` | Текущие лимиты + расход по всем (admin) |
+| `/setlimit <messages\|requests\|tokens> <N>` | Задать суточный лимит, 0 — снять (admin) |
+| `/ban <id>`, `/unban <id>` | Бан-лист (admin) |
+| `/users` | Активность пользователей за сегодня (admin) |
 | `/clear` | Очистить историю |
 
 ---
@@ -62,15 +82,15 @@ docker compose logs -f
 ## Runtime VM
 
 ```
-User input → Planner (70b) → Program (JSON) → VM → StepResult[] → Response
-                                                ↓
-                                         StateContext (персистентный)
-                                                ↓
-                                    store_memory → ChromaDB
+User input → Planner (JSON-mode) → Program (JSON) → VM → StepResult[] → Response
+                                                     ↓
+                                              StateContext (персистентный)
+                                                     ↓
+                                         store_memory → ChromaDB
 ```
 
 **DSL v0.1:** `call_llm`, `respond`, `store_memory`, `call_tool`  
-**RAG:** 8 memories + даты → `_ensure_rag_in_system` → `call_llm.params.system`
+**RAG:** воспоминания пользователя + даты → `_ensure_rag_in_system` → `call_llm.params.system`
 
 ---
 
@@ -80,16 +100,19 @@ User input → Planner (70b) → Program (JSON) → VM → StepResult[] → Resp
 Alex-Nano-Bot/
 ├── app/
 │   ├── agents/               # FastBot, PlanBot, SkillBot, router
-│   ├── core/                 # config, database, llm_client_v2, memory, scheduler, skills_loader
+│   ├── core/                 # config, database, llm_client_v2, memory, scheduler,
+│   │   │                     # skills_loader, access (гейт+лимиты), usage (учёт токенов)
 │   ├── runtime/              # VM, Planner, StateContext, instructions/
 │   │   └── instructions/     # call_llm, call_tool, respond, store_memory
-│   ├── handlers/             # commands, messages, providers, skills, memory, channel, reminders
-│   ├── utils/                # keyboards, states, helpers
+│   ├── handlers/             # commands, messages, providers, skills, memory,
+│   │                         # channel, reminders, fallback
+│   ├── utils/                # keyboards, states, helpers (sanitize_html, typing)
 │   └── bot.py
 ├── skills/system/ custom/ external/
 ├── data/                     # bot.db, vector_store/ (volume-mounted)
 ├── logs/                     # (volume-mounted)
-├── tests/                    # conftest, test_runtime (60), test_mfdba_core (2), test_bot (17)
+├── tests/                    # 126 тестов: runtime, helpers, access, usage, bot
+├── ruff.toml                 # зафиксированный набор правил линтера
 ├── docker-compose.yml
 ├── Dockerfile
 └── .env.example
@@ -99,24 +122,34 @@ Alex-Nano-Bot/
 
 ## CI/CD
 
-GitHub Actions · Python 3.12 · `python -m pytest tests/ -q` · **79/79 passed 🟢**
+GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **126/126 passed 🟢**
 
 ---
 
 ## Переменные окружения
 
-| Переменная | Обязательная | По умолчанию |
-|---|---|---|
-| `BOT_TOKEN` | ✅ | — |
-| `ADMIN_IDS` | ✅ | — |
-| `GROQ_API_KEY` | ✅ | — |
-| `OPENROUTER_API_KEY` | ✅ | — |
-| `ANTHROPIC_API_KEY` | — | — |
-| `OPENAI_API_KEY` | — | — |
-| `ENCRYPTION_KEY` | ✅ для /providers | — |
-| `BOT_TIMEZONE` | — | `Europe/Moscow` |
-| `DATABASE_URL` | — | `sqlite+aiosqlite:///data/bot.db` |
-| `VECTOR_STORE_PATH` | — | `data/vector_store` |
+| Переменная | Обязательная | По умолчанию | Описание |
+|---|---|---|---|
+| `BOT_TOKEN` | ✅ | — | Токен бота |
+| `ADMIN_IDS` | ✅ | — | ID админов (через запятую); безлимит по лимитам |
+| `OPENROUTER_API_KEY` | ✅ | — | Основной fallback-провайдер |
+| `GROQ_API_KEY` | — | — | Основной провайдер + vision + whisper |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | — | — | Дополнительные провайдеры |
+| `ENCRYPTION_KEY` | — | — | Fernet-ключ для хранения API-ключей в БД (`/providers`) |
+| `BOT_OPEN_ACCESS` | — | `false` | `true` — открытый режим: бот отвечает всем |
+| `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
+| `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
+| `BOT_TIMEZONE` | — | `Europe/Moscow` | Зона времени в ответах и планировщике |
+| `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
+| `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |
+| `WHISPER_MODEL` | — | `whisper-large-v3` | Распознавание голоса |
+| `FASTBOT_SYSTEM_PROMPT` / `PLANBOT_SYSTEM_PROMPT` / `SKILLBOT_SYSTEM_PROMPT` / `PLANNER_SYSTEM_PROMPT` | — | вшитые | Системные промпты (одной строкой, переносы `\n`) |
+| `DATABASE_URL` | — | `sqlite+aiosqlite:///data/bot.db` | |
+| `VECTOR_STORE_PATH` | — | `data/vector_store` | |
+
+> **Модели:** актуальны на октябрь 2026 — Groq перевёл llama-3.x в Enterprise-only, self-serve: `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, vision — `qwen/qwen3.8-27b`. Список для вашего ключа: `curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"`.
+
+> **Лимиты:** значения из БД (`/setlimit`) перекрывают env. Порог сбрасывается в 00:00 UTC.
 
 ---
 
@@ -135,9 +168,10 @@ docker compose logs -f
 
 ## Безопасность
 
-- Приватный бот: только `ADMIN_IDS`
-- API-ключи Fernet-зашифрованы в БД
+- Закрытый режим по умолчанию: только `ADMIN_IDS`; открытый — с бан-листом и лимитами
+- API-ключи Fernet-зашифрованы в БД; сообщение с ключом удаляется из чата
 - PII не в логах — только `user_id`
+- Суточные лимиты (сообщения / LLM-запросы / токены) защищают бюджет ключей
 
 ---
 

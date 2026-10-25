@@ -239,13 +239,19 @@ class TaskScheduler:
     async def _process_ai_task(self, user_id: int, message: str, agent_mode: str = "fastbot"):
         """Process task with AI agent"""
         try:
+            from app.core.usage import flush_usage, start_usage_session
+
             # Route to appropriate agent
-            response = await agent_router.route_message(
-                user_id=user_id,
-                message=message,
-                agent_mode=agent_mode
-            )
-            
+            start_usage_session(user_id)
+            try:
+                response = await agent_router.route_message(
+                    user_id=user_id,
+                    message=message,
+                    agent_mode=agent_mode
+                )
+            finally:
+                await flush_usage()
+
             if self._bot:
                 await self._bot.send_message(
                     chat_id=user_id,

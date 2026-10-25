@@ -445,6 +445,14 @@ class MultiProviderLLMClient:
 
                     logger.info(f"Success with {provider.name} in {response_time:.0f}ms")
 
+                    # per-user учёт токенов (сессия открыта хендлером; вне сессии — no-op)
+                    try:
+                        from app.core.usage import record_usage
+
+                        record_usage(response.get('usage'))
+                    except Exception:
+                        pass
+
                     content = response.get('content', '')
                     tool_calls = response.get('tool_calls')
 

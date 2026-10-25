@@ -202,6 +202,15 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = Field(..., description="Telegram Bot Token")
     ADMIN_IDS: List[int] = Field(default=[], description="List of admin Telegram IDs")
 
+    BOT_OPEN_ACCESS: bool = Field(
+        default=False,
+        description="Открытый режим: бот отвечает любому пользователю (кроме забаненных через /ban)"
+    )
+    USER_DAILY_MESSAGE_LIMIT: int = Field(
+        default=50,
+        description="Суточный лимит сообщений на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
+    )
+
     @field_validator("ADMIN_IDS", mode="before")
     def parse_admin_ids(cls, v):
         if isinstance(v, int):
@@ -381,7 +390,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.5.0", description="Application version")
+    APP_VERSION: str = Field(default="1.6.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

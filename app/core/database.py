@@ -1,6 +1,7 @@
 """
 Database models and connection management
 """
+from datetime import datetime, timezone
 from typing import AsyncGenerator, List, Optional
 
 from sqlalchemy import (
@@ -13,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     select,
+    update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
@@ -35,6 +37,7 @@ class User(Base):
     language_code = Column(String(10), nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    is_banned = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     
@@ -118,6 +121,29 @@ class UserState(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
+class UsageDaily(Base):
+    """Расход токенов LLM по пользователям за UTC-сутки"""
+    __tablename__ = "usage_daily"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    date = Column(String(10), primary_key=True)  # YYYY-MM-DD (UTC)
+    prompt_tokens = Column(Integer, default=0, nullable=False)
+    completion_tokens = Column(Integer, default=0, nullable=False)
+    total_tokens = Column(Integer, default=0, nullable=False)
+    requests = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class BotSetting(Base):
+    """Глобальные настройки бота, изменяемые на лету (key-value)"""
+    __tablename__ = "bot_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_by = Column(Integer, nullable=True)  # telegram_id админа
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class ScheduledTask(Base):
     """Scheduled tasks/reminders table"""
     __tablename__ = "scheduled_tasks"
@@ -177,6 +203,165 @@ async def init_db():
     """Initialize database tables"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all не добавляет новые колонки к существующим таблицам —
+        # для SQLite дополняем вручную
+        if engine.dialect.name == "sqlite":
+            from sqlalchemy import text
+
+            def _ensure_columns(sync_conn):
+                cols = {
+                    row[1]
+                    for row in sync_conn.execute(text("PRAGMA table_info(users)"))
+                }
+                if "is_banned" not in cols:
+                    sync_conn.execute(
+                        text("ALTER TABLE users ADD COLUMN is_banned BOOLEAN NOT NULL DEFAULT 0")
+                    )
+
+            await conn.run_sync(_ensure_columns)
+
+
+async def is_user_banned(telegram_id: int) -> bool:
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(User.is_banned).where(User.telegram_id == telegram_id)
+        )
+        row = result.scalar_one_or_none()
+        return bool(row)
+
+
+async def set_user_banned(telegram_id: int, banned: bool) -> None:
+    async with async_session_maker() as session:
+        user = (
+            await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            user = User(telegram_id=telegram_id, is_banned=banned)
+            session.add(user)
+        else:
+            user.is_banned = banned
+        await session.commit()
+
+
+async def count_today_messages(telegram_id: int) -> int:
+    """Сообщения пользователя за текущие UTC-сутки (created_at в SQLite — UTC)."""
+    start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(func.count(Message.id))
+            .join(User, Message.user_id == User.id)
+            .where(
+                User.telegram_id == telegram_id,
+                Message.role == "user",
+                Message.created_at >= start,
+            )
+        )
+        return result.scalar() or 0
+
+
+def _today_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def add_usage_daily(telegram_id: int, usage: dict) -> None:
+    """Прибавить расход токенов пользователя за текущие UTC-сутки (UPSERT)."""
+    date_str = _today_str()
+    prompt = int(usage.get("prompt_tokens") or 0)
+    completion = int(usage.get("completion_tokens") or 0)
+    total = int(usage.get("total_tokens") or (prompt + completion))
+    requests = int(usage.get("requests") or 0)
+    if not (prompt or completion or total or requests):
+        return
+
+    async with async_session_maker() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_id == telegram_id))
+        ).scalar_one_or_none()
+        if user is None:
+            return
+
+        result = await session.execute(
+            update(UsageDaily)
+            .where(UsageDaily.user_id == user.id, UsageDaily.date == date_str)
+            .values(
+                prompt_tokens=UsageDaily.prompt_tokens + prompt,
+                completion_tokens=UsageDaily.completion_tokens + completion,
+                total_tokens=UsageDaily.total_tokens + total,
+                requests=UsageDaily.requests + requests,
+            )
+        )
+        if result.rowcount == 0:
+            session.add(
+                UsageDaily(
+                    user_id=user.id,
+                    date=date_str,
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    total_tokens=total,
+                    requests=requests,
+                )
+            )
+        await session.commit()
+
+
+async def get_today_usage(telegram_id: int) -> Optional[UsageDaily]:
+    """Расход токенов пользователя за текущие UTC-сутки."""
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(UsageDaily)
+            .join(User, UsageDaily.user_id == User.id)
+            .where(User.telegram_id == telegram_id, UsageDaily.date == _today_str())
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_today_totals() -> dict:
+    """Суммарный расход токенов всех пользователей за текущие UTC-сутки."""
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(
+                func.sum(UsageDaily.prompt_tokens),
+                func.sum(UsageDaily.completion_tokens),
+                func.sum(UsageDaily.total_tokens),
+                func.sum(UsageDaily.requests),
+                func.count(UsageDaily.user_id),
+            ).where(UsageDaily.date == _today_str())
+        )
+        row = result.one()
+        return {
+            "prompt_tokens": row[0] or 0,
+            "completion_tokens": row[1] or 0,
+            "total_tokens": row[2] or 0,
+            "requests": row[3] or 0,
+            "users": row[4] or 0,
+        }
+
+
+async def get_bot_setting(key: str) -> Optional[str]:
+    """Значение динамической настройки бота (None — не задано)."""
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(BotSetting.value).where(BotSetting.key == key)
+        )
+        return result.scalar_one_or_none()
+
+
+async def set_bot_setting(key: str, value: str, updated_by: Optional[int] = None) -> None:
+    async with async_session_maker() as session:
+        row = (
+            await session.execute(select(BotSetting).where(BotSetting.key == key))
+        ).scalar_one_or_none()
+        if row is None:
+            row = BotSetting(key=key, value=value, updated_by=updated_by)
+            session.add(row)
+        else:
+            row.value = value
+            row.updated_by = updated_by
+        await session.commit()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

@@ -12,12 +12,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.agents.router import agent_router
+from app.core.access import check_daily_limit, user_allowed
 from app.core.config import settings
 from app.core.database import async_session_maker, get_or_create_user, save_message
 from app.core.llm_client_v2 import llm_client
 from app.core.memory import vector_memory
 from app.core.skills_loader import skill_loader
-from app.handlers.commands import get_allowed_users, get_user_agent_mode
+from app.core.usage import flush_usage, record_usage, start_usage_session
+from app.handlers.commands import get_user_agent_mode
 
 # --- Runtime VM (agent_mode == "runtime") ---
 from app.runtime import (
@@ -60,7 +62,7 @@ async def handle_message(message: Message, state: FSMContext):
 
     logger.info(f"Message handler triggered: '{user_message}' from user {user.id}")
 
-    if user.id not in get_allowed_users():
+    if not await user_allowed(user.id):
         logger.warning(f"Access denied for user {user.id}")
         await message.answer(
             "⛔ <b>Доступ запрещен</b>\n\n"
@@ -73,6 +75,13 @@ async def handle_message(message: Message, state: FSMContext):
     ]:
         logger.info(f"Skipping menu button: {user_message}")
         return
+
+    limit_check = await check_daily_limit(user.id)
+    if not limit_check.allowed:
+        await message.answer(limit_check.message)
+        return
+
+    start_usage_session(user.id)
 
     try:
         async with async_session_maker() as session:
@@ -246,8 +255,11 @@ async def handle_message(message: Message, state: FSMContext):
         else:
             await message.answer(response)
 
+        await flush_usage()
+
     except Exception as e:
         logger.error(f"Error handling message: {e}")
+        await flush_usage()
         try:
             stop_typing(typing_task)
         except Exception:
@@ -283,10 +295,16 @@ async def handle_photo(message: Message):
     """
     user = message.from_user
 
-    if user.id not in get_allowed_users():
+    if not await user_allowed(user.id):
         await message.answer("⛔ Доступ запрещен")
         return
 
+    limit_check = await check_daily_limit(user.id)
+    if not limit_check.allowed:
+        await message.answer(limit_check.message)
+        return
+
+    start_usage_session(user.id)
     processing_msg = await message.answer("🔍 Обрабатываю…")
 
     caption = (message.caption or "").strip()
@@ -329,6 +347,7 @@ async def handle_photo(message: Message):
             )
         finally:
             stop_typing(typing_task)
+            await flush_usage()
         return
 
     # --- Фото без подписи — vision-анализ ---
@@ -393,6 +412,7 @@ async def handle_photo(message: Message):
                 raise Exception(
                     f"Groq vision error {resp.status_code}: {resp.text[:300]}"
                 )
+            record_usage(resp.json().get("usage"))
             result = resp.json()["choices"][0]["message"]["content"]
 
         # Self-check — только для поисковых/идентификационных запросов
@@ -426,6 +446,7 @@ async def handle_photo(message: Message):
                     raise Exception(
                         f"Groq vision error {check_resp.status_code}: {check_resp.text[:300]}"
                     )
+                record_usage(check_resp.json().get("usage"))
                 final_result = check_resp.json()["choices"][0]["message"]["content"]
 
             await _deliver_summary(
@@ -436,8 +457,11 @@ async def handle_photo(message: Message):
                 processing_msg, f"🖼 <b>Анализ изображения:</b>\n\n{result}"
             )
 
+        await flush_usage()
+
     except Exception as e:
         logger.error(f"Error analyzing photo: {e}")
+        await flush_usage()
         await processing_msg.edit_text(
             "❌ <b>Не удалось проанализировать изображение</b>\n\n"
             "Скорее всего модель из <code>VISION_MODEL</code> недоступна вашему ключу Groq. "
@@ -452,7 +476,7 @@ async def handle_document(message: Message):
     """Handle document messages — import Telegram JSON chat export"""
     user = message.from_user
 
-    if user.id not in get_allowed_users():
+    if not await user_allowed(user.id):
         await message.answer("⛔ Доступ запрещен")
         return
 
@@ -516,7 +540,7 @@ async def handle_voice(message: Message, state: FSMContext):
 
     logger.info(f"Voice message received from user {user.id}")
 
-    if user.id not in get_allowed_users():
+    if not await user_allowed(user.id):
         logger.warning(f"Access denied for user {user.id}")
         await message.answer("⛔ Доступ запрещен")
         return
@@ -527,6 +551,13 @@ async def handle_voice(message: Message, state: FSMContext):
     if is_group and not settings.ENABLE_VOICE_IN_GROUPS:
         logger.info("Voice processing disabled for groups")
         return
+
+    limit_check = await check_daily_limit(user.id)
+    if not limit_check.allowed:
+        await message.answer(limit_check.message)
+        return
+
+    start_usage_session(user.id)
 
     temp_dir = settings.TEMP_DIR
     os.makedirs(temp_dir, exist_ok=True)
@@ -734,6 +765,7 @@ async def handle_voice(message: Message, state: FSMContext):
             "Пожалуйста, попробуйте снова."
         )
     finally:
+        await flush_usage()
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
 

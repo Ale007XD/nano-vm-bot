@@ -69,13 +69,18 @@ async def handle_channel_post(message: Message):
             logger.info(f"Channel post from {chat_id}: photo with caption, summarizing")
             try:
                 from app.agents.router import agent_router
+                from app.core.usage import flush_usage, start_usage_session
                 from app.utils.helpers import sanitize_html, truncate_text
 
-                summary = await agent_router.route_message(
-                    user_id=owner_id,
-                    message=comment,
-                    agent_mode="fastbot",
-                )
+                start_usage_session(owner_id)
+                try:
+                    summary = await agent_router.route_message(
+                        user_id=owner_id,
+                        message=comment,
+                        agent_mode="fastbot",
+                    )
+                finally:
+                    await flush_usage()
                 await message.bot.send_message(
                     chat_id=owner_id,
                     text=(
