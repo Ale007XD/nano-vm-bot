@@ -4,6 +4,7 @@ Utility functions
 import asyncio
 import re
 from datetime import datetime, timedelta
+from html import escape as _html_escape
 from typing import Optional
 
 # Теги, разрешённые Telegram HTML parse_mode
@@ -11,13 +12,46 @@ _ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler"}
 _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>")
 _HREF_RE = re.compile(r"href\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
 
+# LLM часто шлёт Markdown, хотя бот отправляет ответы с parse_mode=HTML
+_MD_CODE_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_-]*\n?(.*?)```", re.DOTALL)
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_MD_ITALIC_RE = re.compile(r"__(.+?)__", re.DOTALL)
+_MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+_MD_HEADER_RE = re.compile(r"^#{1,3}\s+(.+)$", re.MULTILINE)
+
+
+def _markdown_to_html(text: str) -> str:
+    """Конвертирует базовый Markdown LLM-ответов в Telegram HTML:
+    **bold**, __italic__, `code`, ```блоки```, ### заголовки."""
+    if ("`" not in text and "**" not in text and "__" not in text
+            and not _MD_HEADER_RE.search(text)):
+        return text
+
+    code_blocks: list = []
+
+    def _stash_block(m):
+        code_blocks.append(f"<pre>{_html_escape(m.group(1).strip())}</pre>")
+        return f"\x00{len(code_blocks) - 1}\x00"
+
+    text = _MD_CODE_BLOCK_RE.sub(_stash_block, text)
+    text = _MD_BOLD_RE.sub(r"<b>\1</b>", text)
+    text = _MD_ITALIC_RE.sub(r"<i>\1</i>", text)
+    text = _MD_CODE_RE.sub(r"<code>\1</code>", text)
+    text = _MD_HEADER_RE.sub(r"<b>\1</b>", text)
+    for i, block in enumerate(code_blocks):
+        text = text.replace(f"\x00{i}\x00", block)
+    return text
+
 
 def sanitize_html(text: str) -> str:
     """Escape HTML not supported by Telegram and balance allowed tags.
 
+    Сначала базовый Markdown конвертируется в HTML-теги (LLM любит ** и ##),
+    затем посторонние теги экранируются, разрешённые — балансируются.
     Telegram отклоняет сообщение целиком при незакрытом/висячем теге,
     постороннем теге или атрибутах (кроме href у <a>).
     """
+    text = _markdown_to_html(text)
     parts: list = []
     open_tags: list = []
     pos = 0

@@ -62,6 +62,42 @@ class TestSanitizeHtml:
         assert out.count("<i>") == 1 and out.count("</i>") == 1
 
 
+class TestMarkdownToHtml:
+    """LLM шлёт Markdown, бот отправляет parse_mode=HTML — конвертация."""
+
+    def test_bold(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("**26 октября**") == "<b>26 октября</b>"
+
+    def test_italic_underscore(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("__важно__") == "<i>важно</i>"
+
+    def test_inline_code(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("команда `pip install` тут") == "команда <code>pip install</code> тут"
+
+    def test_header(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("## Итог\nтекст") == "<b>Итог</b>\nтекст"
+
+    def test_code_block_becomes_pre_and_escaped(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("```python\nif a < b:\n    pass\n```")
+        assert out.startswith("<pre>")
+        assert "if a &lt; b:" in out
+
+    def test_markdown_inside_code_block_not_converted(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("```\n**not bold**\n```")
+        assert "<b>" not in out
+        assert "**not bold**" in out
+
+    def test_plain_text_untouched_by_md(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("просто текст 2**10") == "просто текст 2**10"
+
+
 class TestCryptoKeySource:
     def test_key_from_settings_when_env_missing(self, monkeypatch):
         pytest.importorskip("cryptography")
