@@ -2,14 +2,14 @@
 Скилл: получение транскрипта YouTube-видео
 Использование: отправь боту ссылку на YouTube-видео
 """
-import re
 import asyncio
-import tempfile
-import os
 import glob
+import os
+import re
+import tempfile
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
 
 
 def extract_video_id(url: str) -> str | None:

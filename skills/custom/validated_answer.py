@@ -176,8 +176,8 @@ async def _web_verify(
         "sources": [str, ...]
       }
     """
+    from app.core.llm_client_v2 import Message, llm_client
     from app.core.web_search import web_search
-    from app.core.llm_client_v2 import llm_client, Message
 
     # --- поиск ---
     try:
@@ -284,7 +284,7 @@ async def _synthesize(
     """
     Синтезирует итоговый ответ из фрагментов (+ web-контекст если есть).
     """
-    from app.core.llm_client_v2 import llm_client, Message
+    from app.core.llm_client_v2 import Message, llm_client
 
     fragments_text = "\n---\n".join(
         f["content"] for f in fragments[:5]  # не больше 5

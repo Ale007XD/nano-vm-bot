@@ -5,10 +5,11 @@ Description: Импорт истории Telegram-чата (JSON) в векто�
 Usage: Отправьте файл result.json боту или укажите путь к файлу.
 """
 import json
+import logging
 import os
 from typing import Any, Dict, List, Optional
+
 from app.core.memory import vector_memory
-import logging
 
 logger = logging.getLogger(__name__)
 

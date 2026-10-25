@@ -104,10 +104,11 @@ class MultiProviderLLMClient:
                 name="groq",
                 base_url="https://api.groq.com/openai/v1",
                 api_key=settings.GROQ_API_KEY,
+                # llama-3.x и gemma2 выведены в Enterprise-only (для обычных
+                # ключей — 404); self-serve замены — gpt-oss
                 models=[
-                    "llama-3.1-8b-instant",
-                    "llama-3.3-70b-versatile",
-                    "gemma2-9b-it",
+                    "openai/gpt-oss-20b",
+                    "openai/gpt-oss-120b",
                     "whisper-large-v3"
                 ],
                 priority=1
@@ -119,9 +120,10 @@ class MultiProviderLLMClient:
                 name="openrouter",
                 base_url="https://openrouter.ai/api/v1",
                 api_key=settings.OPENROUTER_API_KEY,
+                # meta-llama *:free удалены из каталога (404)
                 models=[
-                    "meta-llama/llama-3.3-70b-instruct:free",
-                    "meta-llama/llama-3.1-8b-instruct:free",
+                    "xingchen-agi/xing4.0-29b-a4b:free",
+                    "recursive/flint-v1.0:free",
                 ],
                 priority=2
             ))
@@ -346,14 +348,14 @@ class MultiProviderLLMClient:
 
         model_mappings = {
             "groq": {
-                "default": "llama-3.1-8b-instant",
-                "coder": "llama-3.1-8b-instant",
-                "planner": "llama-3.3-70b-versatile"
+                "default": "openai/gpt-oss-20b",
+                "coder": "openai/gpt-oss-20b",
+                "planner": "openai/gpt-oss-120b"
             },
             "openrouter": {
-                "default": "meta-llama/llama-3.3-70b-instruct:free",
-                "coder": "meta-llama/llama-3.1-8b-instruct:free",
-                "planner": "meta-llama/llama-3.3-70b-instruct:free"
+                "default": "xingchen-agi/xing4.0-29b-a4b:free",
+                "coder": "recursive/flint-v1.0:free",
+                "planner": "xingchen-agi/xing4.0-29b-a4b:free"
             },
             "anthropic": {
                 "default": "claude-3-5-sonnet-20241022",
@@ -581,7 +583,12 @@ class MultiProviderLLMClient:
                 json=payload,
                 timeout=60.0
             )
-            response.raise_for_status()
+            # Тело ошибки важно для диагностики: 404 у Groq/OpenRouter обычно
+            # означает model_not_found, а не «страница не найдена»
+            if response.status_code >= 400:
+                raise Exception(
+                    f"{provider.name} API error {response.status_code}: {response.text[:300]}"
+                )
             data = response.json()
 
             if 'error' in data:
@@ -661,7 +668,10 @@ class MultiProviderLLMClient:
                 json=payload,
                 timeout=60.0
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise Exception(
+                    f"Anthropic API error {response.status_code}: {response.text[:300]}"
+                )
             data = response.json()
 
             if 'error' in data:

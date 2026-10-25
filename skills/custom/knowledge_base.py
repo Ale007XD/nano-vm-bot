@@ -20,9 +20,9 @@ import logging
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
-from contextlib import contextmanager
 
 import httpx
 
