@@ -1,8 +1,7 @@
 """
 Reminder and scheduled task handlers
 """
-from datetime import datetime, timedelta
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext

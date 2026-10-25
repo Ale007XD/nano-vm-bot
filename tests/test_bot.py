@@ -3,7 +3,6 @@ Basic tests for Alex-Nano-Bot
 """
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
 
 
 @pytest.fixture
@@ -201,7 +200,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_database_initialization(self):
         """Test database can be initialized"""
-        from app.core.database import init_db, engine
+        from app.core.database import init_db
         
         try:
             await init_db()

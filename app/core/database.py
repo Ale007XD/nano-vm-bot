@@ -1,11 +1,10 @@
 """
 Database models and connection management
 """
-from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, 
-    ForeignKey, Boolean, JSON, create_engine, select
+    ForeignKey, Boolean, JSON, select
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship

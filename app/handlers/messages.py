@@ -419,7 +419,7 @@ async def handle_voice(message: Message, state: FSMContext):
     is_group = chat_type in ['group', 'supergroup']
 
     if is_group and not settings.ENABLE_VOICE_IN_GROUPS:
-        logger.info(f"Voice processing disabled for groups")
+        logger.info("Voice processing disabled for groups")
         return
 
     temp_dir = settings.TEMP_DIR

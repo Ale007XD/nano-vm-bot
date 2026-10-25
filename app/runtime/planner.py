@@ -255,7 +255,7 @@ class Planner:
             program = json.loads(sanitized)
 
         if "plan" not in program or not isinstance(program["plan"], list):
-            raise ValueError(f"Invalid program structure: missing 'plan' list")
+            raise ValueError("Invalid program structure: missing 'plan' list")
         if len(program["plan"]) == 0:
             raise ValueError("Empty plan")
 

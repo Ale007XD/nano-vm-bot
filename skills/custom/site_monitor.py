@@ -16,7 +16,7 @@ import asyncio
 import httpx
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from contextlib import contextmanager
 from typing import Optional, Dict, Any
 
@@ -102,7 +102,7 @@ async def _safe_notify(user_id: int, text: str):
             with _db() as c:
                 c.execute("UPDATE monitors SET is_active=0 WHERE user_id=?", (user_id,))
         elif "429" in err or "too many" in err:
-            logger.warning(f"Telegram rate limit hit. Waiting 30s before retrying alert.")
+            logger.warning("Telegram rate limit hit. Waiting 30s before retrying alert.")
             await asyncio.sleep(30)
             try:
                 await _notify_func(user_id, text)

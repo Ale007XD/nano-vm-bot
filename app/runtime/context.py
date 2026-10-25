@@ -6,7 +6,7 @@ VMContext — контейнер зависимостей для ExecutionVM.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 
 from app.runtime.state_context import StateContext
 from app.runtime.llm_adapter import LLMProtocol

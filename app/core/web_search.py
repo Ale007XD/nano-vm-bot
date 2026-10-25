@@ -3,9 +3,8 @@ Web Search Module - Internet search functionality for the bot
 Supports multiple search providers: Serper, SerpAPI, Bing, DuckDuckGo
 """
 import httpx
-import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 from app.core.config import settings
 

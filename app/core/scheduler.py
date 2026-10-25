@@ -3,7 +3,7 @@ Task Scheduler using APScheduler
 Handles reminders, recurring tasks, and scheduled messages
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, List, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -14,7 +14,6 @@ import pytz
 
 from app.core.database import async_session_maker, ScheduledTask, get_or_create_user
 from app.core.config import settings
-from app.core.llm_client_v2 import llm_client, Message
 from app.agents.router import agent_router
 import logging
 
@@ -57,8 +56,8 @@ class TaskScheduler:
                 result = await session.execute(
                     select(ScheduledTask).where(
                         and_(
-                            ScheduledTask.is_active == True,
-                            ScheduledTask.is_completed == False
+                            ScheduledTask.is_active.is_(True),
+                            ScheduledTask.is_completed.is_(False)
                         )
                     )
                 )
@@ -265,7 +264,7 @@ class TaskScheduler:
             job = self.scheduler.get_job(f"task_{job_id}")
             if job and job.next_run_time:
                 return job.next_run_time
-        except:
+        except Exception:
             pass
         return None
     
@@ -471,7 +470,7 @@ class TaskScheduler:
                 select(ScheduledTask).where(
                     and_(
                         ScheduledTask.user_id == user.id,
-                        ScheduledTask.is_active == True
+                        ScheduledTask.is_active.is_(True)
                     )
                 ).order_by(ScheduledTask.next_run_at)
             )
@@ -528,7 +527,7 @@ class TaskScheduler:
             # Count by type
             result = await session.execute(
                 select(ScheduledTask.task_type, func.count(ScheduledTask.id))
-                .where(ScheduledTask.is_active == True)
+                .where(ScheduledTask.is_active.is_(True))
                 .group_by(ScheduledTask.task_type)
             )
             by_type = dict(result.all())
@@ -536,14 +535,14 @@ class TaskScheduler:
             # Count total active
             result = await session.execute(
                 select(func.count(ScheduledTask.id))
-                .where(ScheduledTask.is_active == True)
+                .where(ScheduledTask.is_active.is_(True))
             )
             total_active = result.scalar()
             
             # Count completed
             result = await session.execute(
                 select(func.count(ScheduledTask.id))
-                .where(ScheduledTask.is_completed == True)
+                .where(ScheduledTask.is_completed.is_(True))
             )
             total_completed = result.scalar()
             

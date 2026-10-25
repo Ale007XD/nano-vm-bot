@@ -3,16 +3,16 @@ Example system skill: Reminder
 Simple reminder functionality
 """
 
+import asyncio
+import re
+from datetime import datetime, timedelta
+
 SKILL_NAME = "reminder"
 SKILL_DESCRIPTION = "Set simple reminders"
 SKILL_CATEGORY = "productivity"
 SKILL_VERSION = "1.0.0"
 SKILL_AUTHOR = "Alex-Nano-Bot System"
 SKILL_COMMANDS = ["/remind"]
-
-import asyncio
-from datetime import datetime, timedelta
-import re
 
 # In-memory reminders storage (in production, use database)
 reminders = {}

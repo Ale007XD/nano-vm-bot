@@ -14,18 +14,6 @@ knowledge_base — скилл для сбора, анализа и поиска 
   kb list [тег]                — список статей, опционально по тегу
 """
 
-SKILL_NAME = "knowledge_base"
-SKILL_DESCRIPTION = (
-    "Сбор статей из Telegram forwarded-сообщений, извлечение сущностей, "
-    "построение графа связей, семантический поиск. "
-    "Триггеры: 'kb ', 'статья', 'добавь статью', 'найди в базе', 'похожие статьи'."
-)
-SKILL_VERSION = "1.0.0"
-SKILL_AUTHOR = "alex"
-SKILL_CATEGORY = "custom"
-SKILL_COMMANDS = ["kb"]
-
-import asyncio
 import hashlib
 import json
 import logging
@@ -37,6 +25,17 @@ from typing import Optional
 from contextlib import contextmanager
 
 import httpx
+
+SKILL_NAME = "knowledge_base"
+SKILL_DESCRIPTION = (
+    "Сбор статей из Telegram forwarded-сообщений, извлечение сущностей, "
+    "построение графа связей, семантический поиск. "
+    "Триггеры: 'kb ', 'статья', 'добавь статью', 'найди в базе', 'похожие статьи'."
+)
+SKILL_VERSION = "1.0.0"
+SKILL_AUTHOR = "alex"
+SKILL_CATEGORY = "custom"
+SKILL_COMMANDS = ["kb"]
 
 logger = logging.getLogger(__name__)
 
@@ -173,11 +172,10 @@ async def _verify_facts(facts: list[str], title: str) -> list[str]:
     """DuckDuckGo-поиск по заголовку — возвращает уточнённые факты или исходные."""
     try:
         from app.core.web_search import web_search
-        results = await web_search(title, max_results=3)
+        results = await web_search.search(title, num_results=3)
         if not results:
             return facts
 
-        snippets = " | ".join(r.get("snippet", "") for r in results[:3])
         # Просто помечаем — актуальные данные найдены
         return [f"{f} ✓" if i == 0 else f for i, f in enumerate(facts)]
     except Exception as e:
@@ -490,7 +488,7 @@ async def _cmd_refresh_stale(user_id: int, llm_client) -> str:
             [user_id, cutoff] + refreshed
         )
 
-    out = f"🔄 <b>Обновление базы знаний завершено</b>\n\n"
+    out = "🔄 <b>Обновление базы знаний завершено</b>\n\n"
     out += f"✅ Обновлено: {len(refreshed)}\n"
     if failed:
         out += f"❌ Ошибок: {len(failed)}\n"
@@ -498,7 +496,7 @@ async def _cmd_refresh_stale(user_id: int, llm_client) -> str:
     return out
 
 
-
+async def _cmd_list(user_id: int, tag_filter: Optional[str] = None) -> str:
     with _db() as conn:
         if tag_filter:
             rows = conn.execute("""

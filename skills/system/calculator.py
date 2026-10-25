@@ -3,15 +3,14 @@ Example system skill: Calculator
 Demonstrates basic skill structure
 """
 
+import math
+
 SKILL_NAME = "calculator"
 SKILL_DESCRIPTION = "Perform mathematical calculations"
 SKILL_CATEGORY = "utility"
 SKILL_VERSION = "1.0.0"
 SKILL_AUTHOR = "Alex-Nano-Bot System"
 SKILL_COMMANDS = ["/calc"]
-
-import math
-import re
 
 
 async def handle_command(command: str, args: list, message, bot):

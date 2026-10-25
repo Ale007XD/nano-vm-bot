@@ -9,8 +9,8 @@ from app.core.database import async_session_maker, get_or_create_user
 from app.core.memory import vector_memory
 from app.utils.keyboards import get_memory_menu_keyboard, get_cancel_keyboard
 from app.utils.states import MemoryAdd, MemorySearch
-from app.utils.helpers import format_memory, truncate_text
-from app.handlers.commands import check_access_callback, get_allowed_users
+from app.utils.helpers import truncate_text
+from app.handlers.commands import check_access_callback
 import logging
 
 logger = logging.getLogger(__name__)
@@ -202,15 +202,15 @@ async def memory_stats(callback: CallbackQuery):
             by_type = result.all()
         
         response = "📊 <b>Статистика памяти</b>\n\n"
-        response += f"<b>Векторное хранилище:</b>\n"
+        response += "<b>Векторное хранилище:</b>\n"
         for collection, count in stats.items():
             response += f"  • {collection.title()}: {count} элементов\n"
         
-        response += f"\n<b>База данных:</b>\n"
+        response += "\n<b>База данных:</b>\n"
         response += f"  • Всего воспоминаний: {db_count}\n"
         
         if by_type:
-            response += f"\n<b>По типам:</b>\n"
+            response += "\n<b>По типам:</b>\n"
             for mem_type, count in by_type:
                 emoji = {
                     'note': '📝',

@@ -1,20 +1,18 @@
 """
 Main command handlers
 """
-from aiogram import Router, Dispatcher, F
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 
-from app.core.database import async_session_maker, get_or_create_user, save_message
+from app.core.database import async_session_maker, get_or_create_user
 from app.core.config import settings
 from app.utils.keyboards import (
     get_main_menu, get_mode_keyboard, get_skills_menu_keyboard,
     get_memory_menu_keyboard, get_settings_keyboard,
     get_providers_keyboard, get_provider_detail_keyboard, get_provider_models_keyboard
 )
-from app.utils.states import BotMode
-from app.agents.router import agent_router
 import logging
 
 logger = logging.getLogger(__name__)
@@ -59,7 +57,8 @@ async def cmd_start(message: Message):
     user = message.from_user
 
     async with async_session_maker() as session:
-        db_user = await get_or_create_user(
+        # Вызов нужен ради side effect — пользователь создаётся при первом /start
+        await get_or_create_user(
             session,
             telegram_id=user.id,
             username=user.username,

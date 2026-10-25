@@ -12,7 +12,7 @@ StateContext = runtime model для δ(S, Program) → S'.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 from pydantic import ConfigDict
 

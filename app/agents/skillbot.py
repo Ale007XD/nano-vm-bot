@@ -4,7 +4,7 @@ Manages bot capabilities, skills, and extensions
 """
 import html
 import json
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 from app.core.llm_client_v2 import llm_client, Message

@@ -697,7 +697,7 @@ class TestCallToolInstruction:
     """CallToolInstruction интегрируется с ToolRegistry."""
 
     def _make_ctx(self, tool_registry=None):
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
         from app.runtime.context import VMContext
         from app.runtime.state_context import StateContext
 
