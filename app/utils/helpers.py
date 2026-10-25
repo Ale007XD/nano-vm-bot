@@ -2,9 +2,8 @@
 Utility functions
 """
 import re
-from typing import Optional
 from datetime import datetime, timedelta
-
+from typing import Optional
 
 # Теги, разрешённые Telegram HTML parse_mode
 _ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler"}

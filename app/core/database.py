@@ -2,16 +2,23 @@
 Database models and connection management
 """
 from typing import AsyncGenerator, List, Optional
+
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, 
-    ForeignKey, Boolean, JSON, select
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    select,
 )
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
 from app.core.config import settings
-
 
 Base = declarative_base()
 

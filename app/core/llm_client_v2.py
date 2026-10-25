@@ -14,17 +14,18 @@ Changelog:
 - Added public check_health() — replaces _check_providers_health() call sites.
 - transcribe_audio() stays on MultiProviderLLMClient (no separate wrapper needed).
 """
-import json
-import httpx
 import asyncio
+import json
+import logging
 import time
-from typing import List, Dict, Optional, Any, Callable, Union
 from dataclasses import dataclass
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Union
+
+import httpx
 
 from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -789,9 +790,10 @@ class MultiProviderLLMClient:
         language: Optional[str] = None
     ) -> str:
         """Transcribe audio using Groq Whisper"""
-        import aiofiles
-        import os
         import mimetypes
+        import os
+
+        import aiofiles
 
         whisper_providers = [p for p in self.providers if 'whisper' in ' '.join(p.models)]
 

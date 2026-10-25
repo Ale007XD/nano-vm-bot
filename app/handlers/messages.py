@@ -1,29 +1,35 @@
 """
 Message handler for chat conversations
 """
+import base64
+import logging
 import os
 import re
 
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.fsm.context import FSMContext
-
-from app.core.database import async_session_maker, get_or_create_user, save_message
-from app.core.config import settings
-from app.agents.router import agent_router
-from app.handlers.commands import get_user_agent_mode, get_allowed_users
-from app.utils.helpers import sanitize_html
-import base64
 import httpx
-import logging
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
 
-# --- Runtime VM (agent_mode == "runtime") ---
-from app.runtime import ExecutionVM, VMContext, StateContext, MultiProviderLLMAdapter, default_registry
-from app.runtime.planner import Planner
-from app.runtime.tool_registry import ToolRegistry
+from app.agents.router import agent_router
+from app.core.config import settings
+from app.core.database import async_session_maker, get_or_create_user, save_message
 from app.core.llm_client_v2 import llm_client
 from app.core.memory import vector_memory
 from app.core.skills_loader import skill_loader
+from app.handlers.commands import get_allowed_users, get_user_agent_mode
+
+# --- Runtime VM (agent_mode == "runtime") ---
+from app.runtime import (
+    ExecutionVM,
+    MultiProviderLLMAdapter,
+    StateContext,
+    VMContext,
+    default_registry,
+)
+from app.runtime.planner import Planner
+from app.runtime.tool_registry import ToolRegistry
+from app.utils.helpers import sanitize_html
 
 _vm_registry = default_registry()
 _vm = ExecutionVM(_vm_registry)
@@ -128,6 +134,7 @@ async def handle_message(message: Message, state: FSMContext):
             # --- Runtime branch (agent_mode == "runtime") ---
             if agent_mode == "runtime":
                 from sqlalchemy import select
+
                 from app.core.database import UserState
 
                 # Загрузить или создать UserState для персистентности StateContext
@@ -507,6 +514,7 @@ async def handle_voice(message: Message, state: FSMContext):
 
             if agent_mode == "runtime":
                 from sqlalchemy import select
+
                 from app.core.database import UserState
 
                 _us_result = await session.execute(

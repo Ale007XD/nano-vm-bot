@@ -1,17 +1,18 @@
 """
 Memory management handlers
 """
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+import logging
+
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 from app.core.database import async_session_maker, get_or_create_user
 from app.core.memory import vector_memory
-from app.utils.keyboards import get_memory_menu_keyboard, get_cancel_keyboard
-from app.utils.states import MemoryAdd, MemorySearch
-from app.utils.helpers import truncate_text
 from app.handlers.commands import check_access_callback
-import logging
+from app.utils.helpers import truncate_text
+from app.utils.keyboards import get_cancel_keyboard, get_memory_menu_keyboard
+from app.utils.states import MemoryAdd, MemorySearch
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,8 @@ async def memory_stats(callback: CallbackQuery):
         
         # Get database stats
         async with async_session_maker() as session:
-            from sqlalchemy import select, func
+            from sqlalchemy import func, select
+
             from app.core.database import Memory
             
             result = await session.execute(select(func.count()).select_from(Memory))

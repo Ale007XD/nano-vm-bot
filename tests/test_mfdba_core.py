@@ -1,6 +1,8 @@
-import pytest
 from typing import Literal
+
+import pytest
 from pydantic import BaseModel, Field
+
 from app.core.skills_loader import OpenClawExecutor, ToolError
 
 

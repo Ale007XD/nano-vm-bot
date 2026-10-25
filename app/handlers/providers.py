@@ -20,15 +20,15 @@ Security:
 """
 import logging
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core.config import settings
+from app.core.crypto import decrypt_key, encrypt_key, mask_key
 from app.core.database import async_session_maker, upsert_provider_config
-from app.core.crypto import encrypt_key, decrypt_key, mask_key
 from app.core.llm_client_v2 import llm_client
 from app.utils.states import ProviderKeyUpdate
 

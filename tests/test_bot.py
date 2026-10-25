@@ -1,8 +1,9 @@
 """
 Basic tests for Alex-Nano-Bot
 """
-import pytest
 import asyncio
+
+import pytest
 
 
 @pytest.fixture

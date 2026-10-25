@@ -1,19 +1,25 @@
 """
 Main command handlers
 """
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+import logging
+
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
-from app.core.database import async_session_maker, get_or_create_user
 from app.core.config import settings
+from app.core.database import async_session_maker, get_or_create_user
 from app.utils.keyboards import (
-    get_main_menu, get_mode_keyboard, get_skills_menu_keyboard,
-    get_memory_menu_keyboard, get_settings_keyboard,
-    get_providers_keyboard, get_provider_detail_keyboard, get_provider_models_keyboard
+    get_main_menu,
+    get_memory_menu_keyboard,
+    get_mode_keyboard,
+    get_provider_detail_keyboard,
+    get_provider_models_keyboard,
+    get_providers_keyboard,
+    get_settings_keyboard,
+    get_skills_menu_keyboard,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +147,7 @@ async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
 
     async with async_session_maker() as session:
         from sqlalchemy import select
+
         from app.core.database import UserState
 
         # UserState.user_id — FK на users.id, поэтому резолвим internal id
@@ -492,6 +499,7 @@ async def get_user_agent_mode(user_id: int) -> str:
     """Get user's current agent mode (user_id — Telegram ID)"""
     async with async_session_maker() as session:
         from sqlalchemy import select
+
         from app.core.database import UserState
 
         # UserState.user_id — FK на users.id, поэтому резолвим internal id

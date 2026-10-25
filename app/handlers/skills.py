@@ -2,20 +2,23 @@
 Skills management handlers
 """
 import html
+import logging
 
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 from app.core.skills_loader import skill_loader
+from app.handlers.commands import check_access_callback as check_callback_access
+from app.utils.helpers import format_skill_info, is_valid_skill_name
 from app.utils.keyboards import (
-    get_skills_menu_keyboard, get_skills_list_keyboard,
-    get_skill_detail_keyboard, get_confirmation_keyboard, get_cancel_keyboard
+    get_cancel_keyboard,
+    get_confirmation_keyboard,
+    get_skill_detail_keyboard,
+    get_skills_list_keyboard,
+    get_skills_menu_keyboard,
 )
 from app.utils.states import SkillCreation, SkillEdit
-from app.utils.helpers import format_skill_info, is_valid_skill_name
-from app.handlers.commands import check_access_callback as check_callback_access
-import logging
 
 logger = logging.getLogger(__name__)
 

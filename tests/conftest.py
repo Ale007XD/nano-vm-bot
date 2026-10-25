@@ -1,8 +1,8 @@
-import sys
-import os
 import importlib.util
-from unittest.mock import MagicMock, AsyncMock
+import os
+import sys
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

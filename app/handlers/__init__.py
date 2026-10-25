@@ -3,7 +3,16 @@ Handler registration
 """
 from aiogram import Dispatcher
 
-from app.handlers import commands, messages, skills, memory, reminders, providers, channel, fallback
+from app.handlers import (
+    channel,
+    commands,
+    fallback,
+    memory,
+    messages,
+    providers,
+    reminders,
+    skills,
+)
 
 
 def register_handlers(dp: Dispatcher):

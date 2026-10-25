@@ -3,8 +3,8 @@ Channel post handler — обрабатывает сообщения из Telegr
 Бот должен быть добавлен в канал как участник (достаточно read-only).
 Список отслеживаемых каналов: settings.KB_CHANNEL_IDS
 """
-import re
 import logging
+import re
 
 from aiogram import Router
 from aiogram.types import Message

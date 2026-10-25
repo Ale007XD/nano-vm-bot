@@ -13,9 +13,9 @@ tests/test_runtime.py — unit и e2e тесты app/runtime/.
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ===========================================================================
 # MockLLMAdapter
@@ -99,8 +99,8 @@ class TestStateContext:
             state.fsm_state = "other"  # type: ignore[misc]
 
     def test_apply_outbox(self):
-        from app.runtime.state_context import StateContext
         from app.runtime.builder import StepResultBuilder
+        from app.runtime.state_context import StateContext
 
         ctx = StateContext.from_defaults(user_id=1)
         result = StepResultBuilder("s1", "respond").message("привет").build()
@@ -112,8 +112,8 @@ class TestStateContext:
         assert ctx.outbox == []
 
     def test_apply_fsm_transition(self):
-        from app.runtime.state_context import StateContext
         from app.runtime.builder import StepResultBuilder
+        from app.runtime.state_context import StateContext
 
         ctx = StateContext.from_defaults(user_id=1)
         result = StepResultBuilder("s1", "call_llm").transition("awaiting_input").build()
@@ -123,8 +123,8 @@ class TestStateContext:
         assert ctx.fsm_state == "idle"
 
     def test_apply_memory_write(self):
-        from app.runtime.state_context import StateContext
         from app.runtime.builder import StepResultBuilder
+        from app.runtime.state_context import StateContext
 
         ctx = StateContext.from_defaults(user_id=1)
         result = (
@@ -139,8 +139,8 @@ class TestStateContext:
         assert ctx2.memory.entries[0]["collection"] == "episodic"
 
     def test_to_db_context_excludes_ephemeral(self):
-        from app.runtime.state_context import StateContext
         from app.runtime.builder import StepResultBuilder
+        from app.runtime.state_context import StateContext
 
         ctx = StateContext.from_defaults(user_id=1)
         # добавим outbox и memory — они НЕ должны попасть в to_db_context
@@ -441,9 +441,9 @@ class TestVMResolve:
         self.vm = ExecutionVM(InstructionRegistry())
 
     def _ctx_with_vars(self, variables: dict):
-        from app.runtime.state_context import StateContext
         from app.runtime.context import VMContext
         from app.runtime.llm_adapter import MockLLMAdapter
+        from app.runtime.state_context import StateContext
 
         ctx = VMContext(
             state=StateContext.from_defaults(user_id=1),
@@ -636,6 +636,7 @@ class TestToolRegistry:
     def _make_registry(self, skills: dict):
         """Создаёт ToolRegistry с мок-лоадером."""
         from unittest.mock import MagicMock
+
         from app.runtime.tool_registry import ToolRegistry
 
         loader = MagicMock()
@@ -679,8 +680,9 @@ class TestToolRegistry:
 
     def test_list_tools(self):
         from unittest.mock import MagicMock
-        from app.runtime.tool_registry import ToolRegistry
+
         from app.core.skills_loader import SkillInfo
+        from app.runtime.tool_registry import ToolRegistry
 
         loader = MagicMock()
         loader.list_skills.return_value = [
@@ -698,6 +700,7 @@ class TestCallToolInstruction:
 
     def _make_ctx(self, tool_registry=None):
         from unittest.mock import MagicMock
+
         from app.runtime.context import VMContext
         from app.runtime.state_context import StateContext
 
@@ -712,9 +715,10 @@ class TestCallToolInstruction:
 
     @pytest.mark.asyncio
     async def test_call_tool_success(self):
+        from unittest.mock import MagicMock
+
         from app.runtime.instructions.call_tool import CallToolInstruction
         from app.runtime.tool_registry import ToolRegistry
-        from unittest.mock import MagicMock
 
         loader = MagicMock()
         loader.get_skill.return_value = lambda args: "result"
@@ -747,9 +751,10 @@ class TestCallToolInstruction:
 
     @pytest.mark.asyncio
     async def test_call_tool_unknown_tool_returns_error_step(self):
+        from unittest.mock import MagicMock
+
         from app.runtime.instructions.call_tool import CallToolInstruction
         from app.runtime.tool_registry import ToolRegistry
-        from unittest.mock import MagicMock
 
         loader = MagicMock()
         loader.get_skill.return_value = None
@@ -803,8 +808,8 @@ class TestRegressionFixes:
 
     def test_to_db_context_actual_fsm_state_wins(self):
         """Актуальный fsm_state не должен перетираться значением из extra."""
-        from app.runtime.state_context import StateContext
         from app.runtime.builder import StepResultBuilder
+        from app.runtime.state_context import StateContext
 
         fake = MagicMock()
         fake.user_id = 1

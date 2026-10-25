@@ -2,10 +2,10 @@
 Keyboards and UI components
 """
 from aiogram.types import (
-    InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
     ReplyKeyboardMarkup,
-    KeyboardButton
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 

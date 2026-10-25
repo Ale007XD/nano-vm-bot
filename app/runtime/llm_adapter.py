@@ -5,8 +5,7 @@ VM и instructions зависят от LLMProtocol, не от llm_client_v2.
 """
 from __future__ import annotations
 
-from typing import Optional, runtime_checkable, List, Dict, Any, Tuple
-from typing import Protocol
+from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 
 @runtime_checkable

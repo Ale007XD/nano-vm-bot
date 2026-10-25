@@ -2,6 +2,7 @@
 FSM States for conversation management
 """
 from enum import Enum
+
 from aiogram.fsm.state import State, StatesGroup
 
 

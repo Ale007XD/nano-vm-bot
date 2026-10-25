@@ -4,14 +4,14 @@ Manages bot capabilities, skills, and extensions
 """
 import html
 import json
-from typing import List, Dict, Optional
+import logging
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 
-from app.core.llm_client_v2 import llm_client, Message
+from app.core.config import settings
+from app.core.llm_client_v2 import Message, llm_client
 from app.core.memory import vector_memory
 from app.core.skills_loader import skill_loader
-from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 

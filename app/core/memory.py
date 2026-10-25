@@ -3,16 +3,17 @@ Vector Memory System for RAG (Retrieval Augmented Generation)
 Uses ChromaDB for vector storage and fastembed for embeddings (multilingual)
 """
 import asyncio
-import os
 import hashlib
-from typing import List, Dict, Optional, Any
+import logging
+import os
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from fastembed import TextEmbedding
 
 from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 

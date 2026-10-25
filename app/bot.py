@@ -2,6 +2,7 @@
 Main bot initialization
 """
 import asyncio
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -9,10 +10,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.core.memory import vector_memory
-from app.core.skills_loader import skill_loader
-from app.core.scheduler import task_scheduler
 from app.core.logger import setup_logging
+from app.core.memory import vector_memory
+from app.core.scheduler import task_scheduler
+from app.core.skills_loader import skill_loader
 from app.handlers import register_handlers
 
 logger = setup_logging()
@@ -26,10 +27,11 @@ async def _load_provider_configs_from_db():
     Falls back silently to .env values if DB has no override.
     """
     try:
-        from app.core.database import async_session_maker, ProviderConfig
-        from app.core.llm_client_v2 import llm_client
-        from app.core.crypto import decrypt_key
         from sqlalchemy import select
+
+        from app.core.crypto import decrypt_key
+        from app.core.database import ProviderConfig, async_session_maker
+        from app.core.llm_client_v2 import llm_client
 
         async with async_session_maker() as session:
             result = await session.execute(select(ProviderConfig))
@@ -122,10 +124,10 @@ async def _register_kb_refresh_cron(bot):
     owner_id = settings.ADMIN_IDS[0]
 
     try:
-        from app.core.database import async_session_maker
-        from app.core.scheduler import task_scheduler
         from sqlalchemy import select
-        from app.core.database import ScheduledTask
+
+        from app.core.database import ScheduledTask, async_session_maker
+        from app.core.scheduler import task_scheduler
 
         async with async_session_maker() as session:
             existing = await session.execute(

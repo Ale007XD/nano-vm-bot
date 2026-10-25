@@ -32,9 +32,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from app.runtime.builder import StepResultBuilder
 from app.runtime.context import VMContext
 from app.runtime.registry import InstructionRegistry
-from app.runtime.builder import StepResultBuilder
 from app.runtime.state_context import StateContext
 from app.runtime.step_result import StepResult
 

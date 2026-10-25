@@ -1,6 +1,7 @@
-from typing import Dict, Any
-from app.runtime.registry import BaseInstruction
+from typing import Any, Dict
+
 from app.runtime.builder import StepResultBuilder
+from app.runtime.registry import BaseInstruction
 
 _ALLOWED_PARAMS = {"prompt", "system", "system_prompt", "role", "tools"}
 

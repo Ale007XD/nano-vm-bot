@@ -1,10 +1,11 @@
 """
 Logging configuration
 """
+import logging
 import os
 import sys
-import logging
 from logging.handlers import RotatingFileHandler
+
 from pythonjsonlogger import jsonlogger
 
 from app.core.config import settings

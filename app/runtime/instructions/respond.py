@@ -1,4 +1,5 @@
 from typing import Dict
+
 from ..builder import StepResultBuilder
 from ..context import VMContext
 from .base import BaseInstruction
