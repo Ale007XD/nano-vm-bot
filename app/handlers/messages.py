@@ -141,6 +141,9 @@ async def handle_message(message: Message, state: FSMContext):
                     await session.flush()
 
                 runtime_state = StateContext.from_db(db_user_state)
+                # StateContext.user_id по контракту — Telegram ID (ключ в VectorMemory),
+                # тогда как UserState.user_id — internal DB id
+                runtime_state = runtime_state.model_copy(update={"user_id": user.id})
                 vm_ctx = VMContext(
                     state=runtime_state,
                     llm=_llm_adapter,
@@ -152,7 +155,7 @@ async def handle_message(message: Message, state: FSMContext):
                 try:
                     context_data = await vector_memory.get_relevant_context(
                         query=user_message_for_agent,
-                        user_id=db_user.id,
+                        user_id=user.id,
                         n_memories=10,
                         n_conversations=1
                     )
@@ -204,7 +207,8 @@ async def handle_message(message: Message, state: FSMContext):
 
         response = sanitize_html(response)
         if len(response) > 4096:
-            chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
+            # 4000 + заголовок продолжения гарантированно укладывается в лимит 4096
+            chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
             for i, chunk in enumerate(chunks):
                 if i == 0:
                     await message.answer(chunk)
@@ -233,6 +237,14 @@ async def handle_photo(message: Message):
     processing_msg = await message.answer("🔍 Анализирую изображение...")
 
     try:
+        if not settings.GROQ_API_KEY:
+            await processing_msg.edit_text(
+                "❌ <b>Анализ изображений недоступен</b>\n\n"
+                "Vision-модель работает через Groq: задайте <code>GROQ_API_KEY</code> в .env "
+                "и перезапустите бота."
+            )
+            return
+
         photo = message.photo[-1]
         file = await message.bot.get_file(photo.file_id)
 
@@ -507,6 +519,9 @@ async def handle_voice(message: Message, state: FSMContext):
                     await session.flush()
 
                 runtime_state = StateContext.from_db(db_user_state)
+                # StateContext.user_id по контракту — Telegram ID (ключ в VectorMemory),
+                # тогда как UserState.user_id — internal DB id
+                runtime_state = runtime_state.model_copy(update={"user_id": user.id})
                 vm_ctx = VMContext(
                     state=runtime_state,
                     llm=_llm_adapter,
@@ -517,7 +532,7 @@ async def handle_voice(message: Message, state: FSMContext):
                 try:
                     context_data = await vector_memory.get_relevant_context(
                         query=transcribed_text,
-                        user_id=db_user.id,
+                        user_id=user.id,
                         n_memories=10,
                         n_conversations=1
                     )
@@ -569,7 +584,8 @@ async def handle_voice(message: Message, state: FSMContext):
 
         response = sanitize_html(response)
         if len(response) > 4096:
-            chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
+            # 4000 + заголовок продолжения гарантированно укладывается в лимит 4096
+            chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
             for i, chunk in enumerate(chunks):
                 if i == 0:
                     await message.answer(chunk)

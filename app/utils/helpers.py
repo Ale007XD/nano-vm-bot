@@ -7,15 +7,52 @@ from datetime import datetime, timedelta
 
 
 # Теги, разрешённые Telegram HTML parse_mode
-_ALLOWED_TAG_RE = re.compile(
-    r'<(?!/?(b|i|u|s|code|pre|a|tg-spoiler)(\s[^>]*)?>)',
-    re.IGNORECASE
-)
+_ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler"}
+_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>")
+_HREF_RE = re.compile(r"href\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
 
 
 def sanitize_html(text: str) -> str:
-    """Escape HTML tags not supported by Telegram to prevent Bad Request parse errors."""
-    return _ALLOWED_TAG_RE.sub(lambda m: m.group(0).replace("<", "&lt;"), text)
+    """Escape HTML not supported by Telegram and balance allowed tags.
+
+    Telegram отклоняет сообщение целиком при незакрытом/висячем теге,
+    постороннем теге или атрибутах (кроме href у <a>).
+    """
+    parts: list = []
+    open_tags: list = []
+    pos = 0
+    for m in _TAG_RE.finditer(text):
+        parts.append(text[pos:m.start()].replace("<", "&lt;"))
+        pos = m.end()
+        is_closing = m.group(1) == "/"
+        name = m.group(2).lower()
+        if name not in _ALLOWED_TAGS:
+            parts.append(m.group(0).replace("<", "&lt;", 1))
+        elif is_closing:
+            if name in open_tags:
+                # закрываем вплоть до парного, сохраняя корректную вложенность
+                while open_tags:
+                    top = open_tags.pop()
+                    parts.append(f"</{top}>")
+                    if top == name:
+                        break
+            else:
+                parts.append(m.group(0).replace("<", "&lt;", 1))
+        else:
+            if name == "a":
+                href = _HREF_RE.search(m.group(0))
+                if not href:
+                    # <a> без валидного href Telegram не принимает
+                    parts.append(m.group(0).replace("<", "&lt;", 1))
+                    continue
+                parts.append(f'<a href="{href.group(1) or href.group(2) or ""}">')
+            else:
+                parts.append(f"<{name}>")
+            open_tags.append(name)
+    parts.append(text[pos:].replace("<", "&lt;"))
+    while open_tags:
+        parts.append(f"</{open_tags.pop()}>")
+    return "".join(parts)
 
 
 def parse_time_input(text: str, bot_timezone: str) -> Optional[datetime]:

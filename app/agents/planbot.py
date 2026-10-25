@@ -3,6 +3,7 @@ Planbot Agent - Smart Planner with multi-step reasoning
 Advanced reasoning, planning, and verification capabilities
 """
 import json
+import re
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
@@ -79,9 +80,13 @@ class PlanBotAgent:
         """Determine if web search should be triggered"""
         if not settings.ENABLE_WEB_SEARCH:
             return False
-        
+
         message_lower = message.lower()
-        return any(trigger in message_lower for trigger in self.WEB_SEARCH_TRIGGERS)
+        # \b — чтобы «кто» не срабатывало внутри «никто», «найди» внутри «найдись» и т.п.
+        return any(
+            re.search(rf"\b{re.escape(trigger)}\b", message_lower)
+            for trigger in self.WEB_SEARCH_TRIGGERS
+        )
     
     async def process_message(
         self,
@@ -193,7 +198,7 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANNER_MODEL
+            model=settings.PLANBOT_MODEL
         )
         
         try:
@@ -227,7 +232,7 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANNER_MODEL
+            model=settings.PLANBOT_MODEL
         )
         
         return response.content
@@ -262,7 +267,7 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANNER_MODEL
+            model=settings.PLANBOT_MODEL
         )
         
         # Add header showing it was processed by Claudbot
@@ -320,7 +325,7 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANNER_MODEL
+            model=settings.PLANBOT_MODEL
         )
         
         return f"🧩 <b>PlanBot</b>\n\n{response.content}"
@@ -348,7 +353,7 @@ class PlanBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.PLANNER_MODEL
+            model=settings.PLANBOT_MODEL
         )
         
         try:

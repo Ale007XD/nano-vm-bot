@@ -4,6 +4,7 @@ Fast, efficient, and versatile for everyday tasks
 """
 from typing import List, Dict, Optional, AsyncGenerator
 from dataclasses import dataclass
+import re
 
 from app.core.llm_client_v2 import llm_client, Message
 from app.core.memory import vector_memory
@@ -73,7 +74,11 @@ class FastBotAgent:
         if not settings.ENABLE_WEB_SEARCH:
             return False
         message_lower = message.lower()
-        return any(trigger in message_lower for trigger in self.WEB_SEARCH_TRIGGERS)
+        # \b — чтобы «кто» не срабатывало внутри «никто», «найди» внутри «найдись» и т.п.
+        return any(
+            re.search(rf"\b{re.escape(trigger)}\b", message_lower)
+            for trigger in self.WEB_SEARCH_TRIGGERS
+        )
 
     async def process_message(
         self,

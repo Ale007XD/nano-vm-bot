@@ -2,6 +2,7 @@
 Vector Memory System for RAG (Retrieval Augmented Generation)
 Uses ChromaDB for vector storage and fastembed for embeddings (multilingual)
 """
+import asyncio
 import os
 import hashlib
 from typing import List, Dict, Optional, Any
@@ -42,12 +43,16 @@ class VectorMemory:
 
         try:
             logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-            self.embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
+            # fastembed и ChromaDB — синхронные: уводим из event loop
+            self.embedding_model = await asyncio.to_thread(
+                TextEmbedding, model_name=EMBEDDING_MODEL
+            )
             logger.info("Memory initialized with embeddings")
 
             os.makedirs(settings.VECTOR_STORE_PATH, exist_ok=True)
 
-            self.chroma_client = chromadb.PersistentClient(
+            self.chroma_client = await asyncio.to_thread(
+                chromadb.PersistentClient,
                 path=settings.VECTOR_STORE_PATH,
                 settings=ChromaSettings(
                     anonymized_telemetry=False,
@@ -55,15 +60,18 @@ class VectorMemory:
                 )
             )
 
-            self.collections['memories'] = self.chroma_client.get_or_create_collection(
+            self.collections['memories'] = await asyncio.to_thread(
+                self.chroma_client.get_or_create_collection,
                 name="memories",
                 metadata={"description": "User memories and notes"}
             )
-            self.collections['skills'] = self.chroma_client.get_or_create_collection(
+            self.collections['skills'] = await asyncio.to_thread(
+                self.chroma_client.get_or_create_collection,
                 name="skills",
                 metadata={"description": "Skills documentation and code"}
             )
-            self.collections['conversations'] = self.chroma_client.get_or_create_collection(
+            self.collections['conversations'] = await asyncio.to_thread(
+                self.chroma_client.get_or_create_collection,
                 name="conversations",
                 metadata={"description": "Important conversation fragments"}
             )
@@ -99,7 +107,7 @@ class VectorMemory:
 
         try:
             doc_id = self._generate_id(content, user_id)
-            embedding = self._embed_text(content)
+            embedding = await asyncio.to_thread(self._embed_text, content)
 
             doc_metadata = _sanitize_metadata({
                 "user_id": user_id,
@@ -108,7 +116,8 @@ class VectorMemory:
                 **(metadata or {})
             })
 
-            self.collections['memories'].add(
+            await asyncio.to_thread(
+                self.collections['memories'].add,
                 ids=[doc_id],
                 embeddings=[embedding],
                 documents=[content],
@@ -133,13 +142,14 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = self._embed_text(query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query)
 
             where_filter = {"user_id": user_id}
             if memory_type:
                 where_filter["memory_type"] = memory_type
 
-            results = self.collections['memories'].query(
+            results = await asyncio.to_thread(
+                self.collections['memories'].query,
                 query_embeddings=[query_embedding],
                 n_results=n_results,
                 where=where_filter,
@@ -178,7 +188,7 @@ class VectorMemory:
                 content += f"\nCode:\n{code[:2000]}"
 
             doc_id = self._generate_id(skill_name)
-            embedding = self._embed_text(content)
+            embedding = await asyncio.to_thread(self._embed_text, content)
 
             doc_metadata = _sanitize_metadata({
                 "skill_name": skill_name,
@@ -187,7 +197,8 @@ class VectorMemory:
                 **(metadata or {})
             })
 
-            self.collections['skills'].add(
+            await asyncio.to_thread(
+                self.collections['skills'].add,
                 ids=[doc_id],
                 embeddings=[embedding],
                 documents=[content],
@@ -209,9 +220,10 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = self._embed_text(query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query)
 
-            results = self.collections['skills'].query(
+            results = await asyncio.to_thread(
+                self.collections['skills'].query,
                 query_embeddings=[query_embedding],
                 n_results=n_results,
                 include=["documents", "metadatas", "distances"]
@@ -245,7 +257,7 @@ class VectorMemory:
 
         try:
             doc_id = self._generate_id(content, user_id)
-            embedding = self._embed_text(content)
+            embedding = await asyncio.to_thread(self._embed_text, content)
 
             doc_metadata = _sanitize_metadata({
                 "user_id": user_id,
@@ -254,7 +266,8 @@ class VectorMemory:
                 **(metadata or {})
             })
 
-            self.collections['conversations'].add(
+            await asyncio.to_thread(
+                self.collections['conversations'].add,
                 ids=[doc_id],
                 embeddings=[embedding],
                 documents=[content],
@@ -295,9 +308,10 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = self._embed_text(query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query)
 
-            results = self.collections['conversations'].query(
+            results = await asyncio.to_thread(
+                self.collections['conversations'].query,
                 query_embeddings=[query_embedding],
                 n_results=n_results,
                 where={"user_id": user_id},
@@ -325,7 +339,7 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            self.collections['memories'].delete(ids=[doc_id])
+            await asyncio.to_thread(self.collections['memories'].delete, ids=[doc_id])
             return True
         except Exception as e:
             logger.error(f"Failed to delete memory: {e}")
@@ -338,7 +352,7 @@ class VectorMemory:
         try:
             stats = {}
             for name, collection in self.collections.items():
-                stats[name] = collection.count()
+                stats[name] = await asyncio.to_thread(collection.count)
             return stats
         except Exception as e:
             logger.error(f"Failed to get stats: {e}")

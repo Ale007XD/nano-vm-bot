@@ -761,3 +761,87 @@ class TestCallToolInstruction:
         result = await instr.execute("s1", {"tool": "ghost"}, ctx)
         assert result.status == "error"
         assert "ghost" in result.error
+
+
+# ===========================================================================
+# Регрессионные тесты багфиксов (Фаза 2)
+# ===========================================================================
+
+class TestRegressionFixes:
+    """Точечные тесты исправленных дефектов VM/instructions/StateContext."""
+
+    @pytest.mark.asyncio
+    async def test_step_without_instruction_returns_error_step(self, vm, vm_ctx):
+        """Шаг без 'instruction' не должен бросать KeyError из run()."""
+        program = {"plan": [{"id": "s1", "params": {"x": 1}}]}
+        result = await vm.run(program, vm_ctx)
+
+        assert result.aborted is True
+        assert len(result.results) == 1
+        assert result.results[0].status == "error"
+        assert "instruction" in result.results[0].error
+
+    @pytest.mark.asyncio
+    async def test_respond_none_text_produces_empty_message(self, vm, vm_ctx):
+        """Неразрешённый $ref (None) в respond → пустая строка, а не error-шаг."""
+        program = {
+            "plan": [
+                {
+                    "id": "out",
+                    "instruction": "respond",
+                    "on_error": "continue",
+                    "params": {"text": "$missing_step"},
+                }
+            ]
+        }
+        result = await vm.run(program, vm_ctx)
+
+        assert result.aborted is False
+        assert result.results[0].status == "ok"
+        assert len(result.outbox) == 1
+        assert result.outbox[0].text == ""
+
+    def test_to_db_context_actual_fsm_state_wins(self):
+        """Актуальный fsm_state не должен перетираться значением из extra."""
+        from app.runtime.state_context import StateContext
+        from app.runtime.builder import StepResultBuilder
+
+        fake = MagicMock()
+        fake.user_id = 1
+        fake.current_agent = "runtime"
+        fake.context = {"fsm_state": "idle", "skill_name": "calc"}
+
+        ctx = StateContext.from_db(fake)
+        transition = StepResultBuilder("s1", "x").transition("awaiting_input").build()
+        ctx2 = ctx.apply(transition)
+
+        db_ctx = ctx2.to_db_context()
+        assert db_ctx["fsm_state"] == "awaiting_input"
+        assert db_ctx["skill_name"] == "calc"
+
+    @pytest.mark.asyncio
+    async def test_call_llm_ignores_unknown_params(self, vm_ctx):
+        """Лишние ключи params (напр. temperature) не должны ронять шаг."""
+        from app.runtime.instructions.call_llm import CallLLMInstruction
+        from app.runtime.llm_adapter import MockLLMAdapter
+
+        vm_ctx.llm = MockLLMAdapter()
+        instr = CallLLMInstruction()
+        result = await instr.execute(
+            "s1",
+            {"prompt": "тест", "role": "default", "temperature": 0.2, "max_tokens": 100},
+            vm_ctx,
+        )
+        assert result.status == "ok"
+        assert result.output == vm_ctx.llm.fixed_response
+        assert "temperature" not in vm_ctx.llm.calls[0]
+
+    @pytest.mark.asyncio
+    async def test_call_llm_missing_prompt_returns_error(self):
+        """Отсутствие обязательного prompt → error StepResult, не TypeError."""
+        from app.runtime.instructions.call_llm import CallLLMInstruction
+
+        instr = CallLLMInstruction()
+        result = await instr.execute("s1", {"role": "default"}, MagicMock())
+        assert result.status == "error"
+        assert "prompt" in result.error

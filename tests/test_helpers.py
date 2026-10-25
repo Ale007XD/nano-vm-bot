@@ -1,0 +1,107 @@
+"""
+Регрессионные тесты багфиксов Фазы 2:
+    sanitize_html (BUG-12) — экранирование и балансировка Telegram HTML
+    crypto (BUG-14)        — источник ENCRYPTION_KEY
+    web-search триггеры (BUG-19) — границы слов
+"""
+import sys
+import types
+
+import pytest
+
+
+class TestSanitizeHtml:
+    def test_plain_text_untouched(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("просто текст") == "просто текст"
+
+    def test_allowed_tags_preserved(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("<b>жирный</b>") == "<b>жирный</b>"
+
+    def test_unclosed_tag_gets_closed(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("<b>текст") == "<b>текст</b>"
+
+    def test_dangling_closing_tag_escaped(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("текст</i> продолжение")
+        assert "</i>" not in out
+        assert "&lt;/i>" in out
+
+    def test_unknown_tag_escaped(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("<div>x</div>")
+        assert "<div>" not in out
+        assert "&lt;div>" in out
+
+    def test_tag_attributes_stripped(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("<code class='python'>x</code>") == "<code>x</code>"
+
+    def test_a_tag_keeps_href_only(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html('<a href="https://t.ru" onclick="x">ссылка</a>')
+        assert out == '<a href="https://t.ru">ссылка</a>'
+
+    def test_a_without_href_escaped(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("<a>ссылка</a>")
+        assert "<a>" not in out
+
+    def test_bare_lt_escaped(self):
+        from app.utils.helpers import sanitize_html
+        assert sanitize_html("a < b") == "a &lt; b"
+
+    def test_crossed_tags_rebalanced(self):
+        from app.utils.helpers import sanitize_html
+        out = sanitize_html("<b><i>x</b></i>")
+        assert out.count("<b>") == 1 and out.count("</b>") == 1
+        assert out.count("<i>") == 1 and out.count("</i>") == 1
+
+
+class TestCryptoKeySource:
+    def test_key_from_settings_when_env_missing(self, monkeypatch):
+        pytest.importorskip("cryptography")
+        from cryptography.fernet import Fernet
+
+        valid_key = Fernet.generate_key().decode()
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+
+        fake_config = types.SimpleNamespace(
+            settings=types.SimpleNamespace(ENCRYPTION_KEY=valid_key)
+        )
+        monkeypatch.setitem(sys.modules, "app.core.config", fake_config)
+
+        from app.core import crypto
+        f = crypto._get_fernet()
+        assert f.encrypt(b"secret")
+
+    def test_missing_key_raises(self, monkeypatch):
+        pytest.importorskip("cryptography")
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+
+        fake_config = types.SimpleNamespace(
+            settings=types.SimpleNamespace(ENCRYPTION_KEY="")
+        )
+        monkeypatch.setitem(sys.modules, "app.core.config", fake_config)
+
+        from app.core import crypto
+        with pytest.raises(RuntimeError, match="ENCRYPTION_KEY"):
+            crypto._get_fernet()
+
+
+class TestWebSearchTrigger:
+    """Триггеры веб-поиска должны матчиться по границам слов (BUG-19)."""
+
+    def test_substring_word_does_not_trigger(self):
+        from app.agents.fastbot import FastBotAgent
+        agent = FastBotAgent()
+        assert agent._should_search_web("никто не знает ответа") is False
+        assert agent._should_search_web("прежде чем ответить") is False
+
+    def test_real_trigger_words_still_work(self):
+        from app.agents.fastbot import FastBotAgent
+        agent = FastBotAgent()
+        assert agent._should_search_web("кто такой Пушкин?") is True
+        assert agent._should_search_web("найди рецепт борща") is True

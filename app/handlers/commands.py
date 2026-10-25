@@ -144,14 +144,17 @@ async def process_mode_selection(callback: CallbackQuery, state: FSMContext):
         from sqlalchemy import select
         from app.core.database import UserState
 
+        # UserState.user_id — FK на users.id, поэтому резолвим internal id
+        db_user = await get_or_create_user(session, telegram_id=callback.from_user.id)
+
         result = await session.execute(
-            select(UserState).where(UserState.user_id == callback.from_user.id)
+            select(UserState).where(UserState.user_id == db_user.id)
         )
         user_state = result.scalar_one_or_none()
 
         if not user_state:
             user_state = UserState(
-                user_id=callback.from_user.id,
+                user_id=db_user.id,
                 current_agent=mode
             )
             session.add(user_state)
@@ -487,13 +490,15 @@ async def providers_set(callback: CallbackQuery):
 
 
 async def get_user_agent_mode(user_id: int) -> str:
-    """Get user's current agent mode"""
+    """Get user's current agent mode (user_id — Telegram ID)"""
     async with async_session_maker() as session:
         from sqlalchemy import select
         from app.core.database import UserState
 
+        # UserState.user_id — FK на users.id, поэтому резолвим internal id
+        db_user = await get_or_create_user(session, telegram_id=user_id)
         result = await session.execute(
-            select(UserState).where(UserState.user_id == user_id)
+            select(UserState).where(UserState.user_id == db_user.id)
         )
         user_state = result.scalar_one_or_none()
 
@@ -549,10 +554,3 @@ async def prov_refresh_compat(callback: CallbackQuery):
         _providers_menu_text(info),
         reply_markup=get_providers_keyboard(info)
     )
-
-
-@router.callback_query()
-async def fallback_unhandled_callback(callback: CallbackQuery):
-    """Catch-all for unmatched callbacks"""
-    logger.warning(f"Unhandled callback query data: {callback.data}")
-    await callback.answer("⚠️ Действие не распознано (unhandled)", show_alert=True)

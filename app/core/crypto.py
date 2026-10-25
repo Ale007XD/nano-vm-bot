@@ -25,6 +25,10 @@ def _get_fernet() -> "Fernet":
         )
     key = os.environ.get("ENCRYPTION_KEY", "")
     if not key:
+        # .env загружается в settings, но не экспортируется в os.environ
+        from app.core.config import settings
+        key = settings.ENCRYPTION_KEY
+    if not key:
         raise RuntimeError(
             "ENCRYPTION_KEY is not set in environment. "
             "Generate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""

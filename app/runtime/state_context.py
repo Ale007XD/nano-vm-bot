@@ -139,6 +139,6 @@ class StateContext(BaseModel):
         outbox и memory НЕ персистируются — они ephemeral.
         """
         return {
-            "fsm_state": self.fsm_state,
             **self.extra,
+            "fsm_state": self.fsm_state,
         }

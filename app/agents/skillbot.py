@@ -2,12 +2,14 @@
 Skillbot Agent - Skills Manager and Catalog
 Manages bot capabilities, skills, and extensions
 """
+import html
 import json
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
 from app.core.llm_client_v2 import llm_client, Message
 from app.core.memory import vector_memory
+from app.core.skills_loader import skill_loader
 from app.core.config import settings
 import logging
 
@@ -126,7 +128,7 @@ class SkillBotAgent:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.CODER_MODEL
+            model=settings.SKILLBOT_MODEL
         )
         
         try:
@@ -158,7 +160,7 @@ class SkillBotAgent:
         
         preview += f"""
 <b>Сгенерированный код:</b>
-<pre><code class="python">{skill_code[:800]}</code></pre>
+<pre>{html.escape(skill_code[:800])}</pre>
 
 Используйте /skills для создания этого навыка с сгенерированным кодом."""
         
@@ -219,7 +221,7 @@ def setup_handlers():
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.CODER_MODEL
+            model=settings.SKILLBOT_MODEL
         )
         
         # Extract code from response
@@ -379,7 +381,7 @@ Respond with JSON:
         
         response = await llm_client.chat_with_fallback(
             messages,
-            model=settings.CODER_MODEL
+            model=settings.SKILLBOT_MODEL
         )
         
         try:

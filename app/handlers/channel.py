@@ -73,7 +73,7 @@ async def handle_channel_post(message: Message):
             logger.warning("knowledge_base skill not loaded")
             return
 
-        result = await kb_skill.run({
+        result = await kb_skill({
             "user_id": owner_id,
             "message_text": text,
             "args": {"url": url, "comment": comment},

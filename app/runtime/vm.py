@@ -79,13 +79,20 @@ class ExecutionVM:
 
         for step in steps:
             step_id: str = step.get("id", f"step_{len(step_results)}")
-            name: str = step["instruction"]
+            name: str = step.get("instruction")
             on_error: str = step.get("on_error", "abort")
             raw_params: Dict = step.get("params", {})
 
             params = self._resolve(raw_params, ctx)
 
-            result = await self._execute_step(step_id, name, params, ctx)
+            if not name:
+                result = (
+                    StepResultBuilder(step_id, "unknown")
+                    .error("Step is missing required field 'instruction'")
+                    .build()
+                )
+            else:
+                result = await self._execute_step(step_id, name, params, ctx)
             step_results.append(result)
 
             # сохранить output для $-refs следующих шагов

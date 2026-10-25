@@ -82,19 +82,24 @@ class TaskScheduler:
             
             if task.task_type == "one_time":
                 # One-time task at specific date
-                if task.run_date and task.run_date > datetime.now(pytz.UTC):
-                    trigger = DateTrigger(run_date=task.run_date)
-                    self.scheduler.add_job(
-                        func=self._execute_task,
-                        trigger=trigger,
-                        id=job_id,
-                        args=[task.id],
-                        replace_existing=True
-                    )
-                    logger.info(f"Scheduled one-time task {task.id} for {task.run_date}")
-                else:
-                    logger.warning(f"Task {task.id} has past date, marking completed")
-                    await self._mark_task_completed(task.id)
+                if task.run_date:
+                    run_dt = task.run_date
+                    if run_dt.tzinfo is None:
+                        # SQLite возвращает naive datetime в wall-time зоны задачи
+                        run_dt = pytz.timezone(task.timezone or settings.BOT_TIMEZONE).localize(run_dt)
+                    if run_dt > datetime.now(pytz.UTC):
+                        trigger = DateTrigger(run_date=run_dt)
+                        self.scheduler.add_job(
+                            func=self._execute_task,
+                            trigger=trigger,
+                            id=job_id,
+                            args=[task.id],
+                            replace_existing=True
+                        )
+                        logger.info(f"Scheduled one-time task {task.id} for {task.run_date}")
+                    else:
+                        logger.warning(f"Task {task.id} has past date, marking completed")
+                        await self._mark_task_completed(task.id)
                     
             elif task.task_type == "recurring":
                 # Recurring task with cron expression
@@ -203,7 +208,7 @@ class TaskScheduler:
                 logger.warning("KB stale refresh: knowledge_base skill not loaded")
                 return
 
-            result = await kb_skill.run({
+            result = await kb_skill({
                 "user_id": telegram_id,
                 "message_text": "kb refresh_stale",
                 "args": {"cmd": "refresh_stale"},
@@ -224,7 +229,8 @@ class TaskScheduler:
             try:
                 await self._bot.send_message(
                     chat_id=telegram_id,
-                    text=f"⏰ <b>Напоминание</b>\n\n{message}"
+                    text=f"⏰ <b>Напоминание</b>\n\n{message}",
+                    parse_mode="HTML"
                 )
                 logger.info(f"Sent reminder to {telegram_id}")
             except Exception as e:
@@ -397,6 +403,55 @@ class TaskScheduler:
             
             logger.info(f"Created interval task {task.id} every {interval_minutes} minutes")
             return task
+
+    async def create_daily_task(
+        self,
+        user_id: int,
+        telegram_id: int,
+        description: str,
+        hour: int,
+        minute: int,
+        message_text: Optional[str] = None,
+        name: Optional[str] = None,
+        max_runs: Optional[int] = None
+    ) -> ScheduledTask:
+        """Create a daily recurring task (cron: every day at HH:MM)"""
+        return await self.create_recurring_task(
+            user_id=user_id,
+            telegram_id=telegram_id,
+            description=description,
+            cron_expression=f"{minute} {hour} * * *",
+            message_text=message_text,
+            name=name,
+            max_runs=max_runs
+        )
+
+    async def create_weekly_task(
+        self,
+        user_id: int,
+        telegram_id: int,
+        description: str,
+        day_of_week: int,
+        hour: int,
+        minute: int,
+        message_text: Optional[str] = None,
+        name: Optional[str] = None,
+        max_runs: Optional[int] = None
+    ) -> ScheduledTask:
+        """Create a weekly recurring task (cron: every week on day_of_week at HH:MM).
+
+        day_of_week: 0=понедельник .. 6=воскресенье (datetime.weekday()).
+        APScheduler CronTrigger использует ту же нумерацию.
+        """
+        return await self.create_recurring_task(
+            user_id=user_id,
+            telegram_id=telegram_id,
+            description=description,
+            cron_expression=f"{minute} {hour} * * {day_of_week}",
+            message_text=message_text,
+            name=name,
+            max_runs=max_runs
+        )
     
     async def get_user_tasks(self, telegram_id: int) -> List[ScheduledTask]:
         """Get all active tasks for a user"""

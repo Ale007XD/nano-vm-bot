@@ -1,6 +1,8 @@
 """
 Skills management handlers
 """
+import html
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -100,13 +102,15 @@ async def skill_code(callback: CallbackQuery):
     # Truncate if too long
     if len(code) > 3500:
         code = code[:3500] + "\n\n... (код обрезан)"
-    
-    await callback.message.edit_text(
-        f"📄 <b>Код навыка: {skill_name}</b>\n\n"
-        f"<pre><code class='python'>{code}</code></pre>",
-        reply_markup=get_skill_detail_keyboard(skill_name, "custom")
-    )
-    await callback.answer()
+
+    try:
+        await callback.message.edit_text(
+            f"📄 <b>Код навыка: {skill_name}</b>\n\n"
+            f"<pre>{html.escape(code)}</pre>",
+            reply_markup=get_skill_detail_keyboard(skill_name, "custom")
+        )
+    finally:
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("skill:delete:"))
@@ -310,13 +314,15 @@ async def skill_edit_start(callback: CallbackQuery, state: FSMContext):
     if len(code) > 3500:
         code = code[:3500]
 
-    await callback.message.edit_text(
-        f"✏️ <b>Редактирование навыка: {skill_name}</b>\n\n"
-        f"Отправьте новый код навыка:\n\n"
-        f"<pre><code class='python'>{code}</code></pre>",
-        reply_markup=get_cancel_keyboard()
-    )
-    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            f"✏️ <b>Редактирование навыка: {skill_name}</b>\n\n"
+            f"Отправьте новый код навыка:\n\n"
+            f"<pre>{html.escape(code)}</pre>",
+            reply_markup=get_cancel_keyboard()
+        )
+    finally:
+        await callback.answer()
 
 
 @router.message(SkillEdit.editing_code)

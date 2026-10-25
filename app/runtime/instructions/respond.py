@@ -8,10 +8,14 @@ class RespondInstruction(BaseInstruction):
     name = "respond"
 
     async def execute(self, step_id: str, params: Dict, ctx: VMContext):
-        text = params.get("text", "")
+        # Неразрешённый $ref приходит как None — отвечаем пустой строкой,
+        # а не роняем шаг на валидации OutboxMessage
+        text = params.get("text")
+        if text is None:
+            text = ""
 
         return (
             StepResultBuilder(step_id, self.name)
-            .message(text)
+            .message(str(text))
             .build()
         )
