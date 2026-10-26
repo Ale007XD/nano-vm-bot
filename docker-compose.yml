@@ -23,6 +23,25 @@ services:
       retries: 3
       start_period: 40s
 
+  showcase:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alex-nano-showcase
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./skills:/app/skills
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python -m app.bot_showcase
+    profiles: ["showcase"]
+    networks:
+      - bot-network
+
 networks:
   bot-network:
     driver: bridge

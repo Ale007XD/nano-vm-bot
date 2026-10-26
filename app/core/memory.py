@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -75,6 +76,11 @@ class VectorMemory:
                 self.chroma_client.get_or_create_collection,
                 name="conversations",
                 metadata={"description": "Important conversation fragments"}
+            )
+            self.collections['corpus'] = await asyncio.to_thread(
+                self.chroma_client.get_or_create_collection,
+                name="corpus",
+                metadata={"description": "Showcase support knowledge corpus"}
             )
 
             self._initialized = True
@@ -334,6 +340,191 @@ class VectorMemory:
         except Exception as e:
             logger.error(f"Failed to search conversations: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # Showcase corpus management
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _chunk_text(
+        text: str,
+        chunk_size: int,
+        overlap: int
+    ) -> List[str]:
+        """Split text into overlapping chunks on sentence boundaries.
+
+        A single sentence longer than chunk_size is hard-split by characters so
+        every returned chunk is guaranteed to be <= chunk_size characters.
+        """
+        text = text.strip()
+        if not text or chunk_size <= 0:
+            return []
+
+        sentences = re.split(r'(?<=[.!?…])\s+', text)
+        chunks: List[str] = []
+        current = ""
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            # Одно предложение длиннее лимита — режем посимвольно.
+            if len(sentence) > chunk_size:
+                if current:
+                    chunks.append(current.strip())
+                    current = ""
+                for i in range(0, len(sentence), chunk_size):
+                    chunks.append(sentence[i:i + chunk_size])
+                continue
+
+            if current and len(current) + 1 + len(sentence) > chunk_size:
+                chunks.append(current.strip())
+                # Начало следующего чанка — наложение из конца текущего.
+                words = current.split()
+                keep = max(0, overlap // 8)
+                if keep:
+                    current = " ".join(words[-keep:]) + " " + sentence
+                else:
+                    current = sentence
+            else:
+                current = (current + " " + sentence).strip() if current else sentence
+
+        if current.strip():
+            chunks.append(current.strip())
+
+        return [c for c in chunks if c]
+
+    async def add_corpus_document(
+        self,
+        source_id: str,
+        source_name: str,
+        content: str,
+        source_url: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None
+    ) -> str:
+        """Add a document to the showcase knowledge corpus.
+
+        Splits content into overlapping chunks and stores each chunk as a
+        separate ChromaDB document with shared source metadata.
+        Returns the source_id.
+        """
+        await self.initialize()
+
+        chunk_size = chunk_size or settings.CORPUS_CHUNK_SIZE
+        chunk_overlap = chunk_overlap or settings.CORPUS_CHUNK_OVERLAP
+
+        chunks = self._chunk_text(content, chunk_size, chunk_overlap)
+        if not chunks:
+            raise ValueError("Document produced no chunks")
+
+        try:
+            ids = []
+            embeddings = []
+            documents = []
+            metadatas = []
+
+            now = datetime.now().isoformat()
+            for idx, chunk in enumerate(chunks):
+                doc_id = hashlib.md5(
+                    f"{source_id}:{idx}:{chunk[:80]}".encode()
+                ).hexdigest()
+                embedding = await asyncio.to_thread(self._embed_text, chunk)
+
+                ids.append(doc_id)
+                embeddings.append(embedding)
+                documents.append(chunk)
+                metadatas.append(_sanitize_metadata({
+                    "source_id": source_id,
+                    "source_name": source_name,
+                    "source_url": source_url or "",
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "added_at": now,
+                }))
+
+            await asyncio.to_thread(
+                self.collections['corpus'].add,
+                ids=ids,
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=metadatas
+            )
+
+            logger.info(
+                f"Added corpus document {source_id}: {len(chunks)} chunks"
+            )
+            return source_id
+
+        except Exception as e:
+            logger.error(f"Failed to add corpus document {source_id}: {e}")
+            raise
+
+    async def search_corpus(
+        self,
+        query: str,
+        n_results: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Semantic search in the showcase knowledge corpus."""
+        await self.initialize()
+
+        n_results = n_results or settings.CORPUS_TOP_K
+
+        try:
+            query_embedding = await asyncio.to_thread(self._embed_text, query)
+
+            results = await asyncio.to_thread(
+                self.collections['corpus'].query,
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"]
+            )
+
+            corpus_docs = []
+            if results['ids'] and results['ids'][0]:
+                for i, doc_id in enumerate(results['ids'][0]):
+                    corpus_docs.append({
+                        'id': doc_id,
+                        'content': results['documents'][0][i],
+                        'metadata': results['metadatas'][0][i],
+                        'distance': results['distances'][0][i]
+                    })
+
+            return corpus_docs
+
+        except Exception as e:
+            logger.error(f"Failed to search corpus: {e}")
+            return []
+
+    async def delete_corpus_document(self, source_id: str) -> bool:
+        """Delete all chunks of a corpus document by source_id."""
+        await self.initialize()
+
+        try:
+            await asyncio.to_thread(
+                self.collections['corpus'].delete,
+                where={"source_id": source_id}
+            )
+            logger.info(f"Deleted corpus document {source_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete corpus document {source_id}: {e}")
+            return False
+
+    async def get_corpus_stats(self) -> Dict[str, int]:
+        """Get corpus statistics (document count and chunk count)."""
+        await self.initialize()
+
+        try:
+            count = self.collections['corpus'].count()
+            return {
+                "documents": count,  # Chroma count = chunks; docs ≈ chunks
+                "chunks": count
+            }
+        except Exception as e:
+            logger.error(f"Failed to get corpus stats: {e}")
+            return {"documents": 0, "chunks": 0}
 
     async def delete_memory(self, doc_id: str) -> bool:
         """Delete a memory by ID"""

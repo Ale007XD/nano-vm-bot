@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.6.0 · **Тесты:** 148 passed 🟢 · ruff: clean
+**Версия:** 1.8.0 · **Тесты:** 156 passed 🟢 · ruff: clean
 
 ---
 
@@ -45,6 +45,12 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 🧩 **Внешние навыки:**
 - **Agent Skills (SKILL.md)** — инструкционные навыки открытого стандарта [agentskills.io](https://agentskills.io/specification): папка в `skills/external/` или установка документом `.md` (админ); запуск из `/skills` — исполняет LLM по инструкции
 - **MCP-инструменты** ([Model Context Protocol](https://registry.modelcontextprotocol.io)) — внешние серверы (stdio / Streamable HTTP) через `MCP_SERVERS`; их инструменты доступны VM как `call_tool <server>__<tool>`, Planner видит их список; статус — `/mcp` (admin)
+
+📚 **Витрина службы поддержки (отдельная точка входа):**
+- Демо-бот с собственным токеном (`SHOWCASE_BOT_TOKEN`) отвечает клиентам **строго по загруженному корпусу** базы знаний и ничего не выдумывает.
+- Администратор загружает документы (`.md`, `.txt`) боту — они режутся на чанки и индексируются в отдельной коллекции ChromaDB.
+- Ответ строится только из релевантных чанков с перечнем источников; при отсутствии данных — честный отказ.
+- Команды: `/start`, `/help`, `/corpus_stats` (статус корпуса, админ).
 
 ---
 
@@ -95,6 +101,7 @@ User input → Planner (JSON-mode) → Program (JSON) → VM → StepResult[] �
 ```
 
 **DSL v0.1:** `call_llm`, `respond`, `store_memory`, `call_tool`  
+**call_tool:** сначала локальные навыки (`.py`, `run(context)`), при отсутствии — внешние MCP-инструменты `<server>__<tool>`  
 **RAG:** воспоминания пользователя + даты → `_ensure_rag_in_system` → `call_llm.params.system`
 
 ---
@@ -106,17 +113,19 @@ Alex-Nano-Bot/
 ├── app/
 │   ├── agents/               # FastBot, PlanBot, SkillBot, router
 │   ├── core/                 # config, database, llm_client_v2, memory, scheduler,
-│   │   │                     # skills_loader, access (гейт+лимиты), usage (учёт токенов)
+│   │   │                     # skills_loader (+SKILL.md), access (гейт+лимиты),
+│   │   │                     # usage (учёт токенов), mcp (внешние инструменты)
 │   ├── runtime/              # VM, Planner, StateContext, instructions/
 │   │   └── instructions/     # call_llm, call_tool, respond, store_memory
 │   ├── handlers/             # commands, messages, providers, skills, memory,
 │   │                         # channel, reminders, fallback
 │   ├── utils/                # keyboards, states, helpers (sanitize_html, typing)
 │   └── bot.py
-├── skills/system/ custom/ external/
+│   └── bot_showcase.py           # демо-бот витрины службы поддержки (отдельная точка входа)
+├── skills/system/ custom/ external/   # external: .py-навыки и папки с SKILL.md
 ├── data/                     # bot.db, vector_store/ (volume-mounted)
 ├── logs/                     # (volume-mounted)
-├── tests/                    # 148 тестов: runtime, helpers, access, usage, mcp, bot
+├── tests/                    # 156 тестов: runtime, helpers, access, usage, mcp, corpus, bot
 ├── ruff.toml                 # зафиксированный набор правил линтера
 ├── docker-compose.yml
 ├── Dockerfile
@@ -127,7 +136,7 @@ Alex-Nano-Bot/
 
 ## CI/CD
 
-GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **148/148 passed 🟢**
+GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **156/156 passed 🟢**
 
 ---
 
@@ -145,6 +154,11 @@ GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) ·
 | `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
 | `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
 | `MCP_SERVERS` | — | — | JSON-список MCP-серверов одной строкой: `[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}]` или `[{"name":"x","url":"https://host/mcp"}]` (stdio требует `uv`, уже в образе) |
+| `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто — сервис витрины не запускается) |
+| `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель демо-бота витрины |
+| `CORPUS_CHUNK_SIZE` | — | `1200` | Размер чанка корпуса (символы) |
+| `CORPUS_CHUNK_OVERLAP` | — | `200` | Перекрытие чанков корпуса (символы) |
+| `CORPUS_TOP_K` | — | `5` | Чанков в контексте ответа |
 | `BOT_TIMEZONE` | — | `Europe/Moscow` | Зона времени в ответах и планировщике |
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |
@@ -168,6 +182,12 @@ rsync -av --exclude='data/' --exclude='logs/' --exclude='.env' \
 cd ~/my-bots/Alex-Nano-Bot
 docker compose build bot && docker compose up -d bot
 docker compose logs -f
+```
+
+Запуск витрины службы поддержки (отдельный процесс, свой токен):
+
+```bash
+docker compose --profile showcase up -d showcase
 ```
 
 ---
