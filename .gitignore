@@ -94,3 +94,5 @@ logs/*.log
 !skills/system/.gitkeep
 !skills/custom/.gitkeep
 !skills/external/.gitkeep
+
+patches/

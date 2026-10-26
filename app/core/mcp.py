@@ -160,10 +160,14 @@ class MCPManager:
         from mcp import ClientSession
 
         if srv.url:
-            from mcp.client.streamable_http import streamablehttp_client
+            try:  # mcp >= 2.0
+                from mcp.client.streamable_http import streamable_http_client as _http
+            except ImportError:  # mcp 1.x
+                from mcp.client.streamable_http import streamablehttp_client as _http
 
-            async with streamablehttp_client(srv.url) as (read, write, _):
-                async with ClientSession(read, write) as session:
+            async with _http(srv.url) as streams:
+                # 1.x отдаёт (read, write, get_session_id), 2.x — (read, write)
+                async with ClientSession(streams[0], streams[1]) as session:
                     await session.initialize()
                     return await fn(session)
 
