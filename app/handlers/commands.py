@@ -661,6 +661,47 @@ async def cmd_setlimit(message: Message):
         await message.answer(f"✅ Суточный лимит «{label}» снят (безлимит).")
 
 
+@router.message(Command("mcp"))
+async def cmd_mcp(message: Message):
+    """Статус внешних MCP-серверов и их инструментов (admin)"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+
+    from app.core.mcp import _client_available, mcp_manager
+
+    if not _client_available():
+        await message.answer(
+            "❌ Пакет <code>mcp</code> не установлен (требуется Python 3.11+)."
+        )
+        return
+
+    servers = mcp_manager.servers()
+    if not servers:
+        await message.answer(
+            "📭 MCP-серверы не настроены.\n\n"
+            "Пример для .env (одной строкой):\n"
+            '<code>MCP_SERVERS=[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}]</code>\n'
+            '<code>MCP_SERVERS=[{"name":"remote","url":"https://host/mcp"}]</code>'
+        )
+        return
+
+    force_refresh = "refresh" in (message.text or "")
+    tools = await mcp_manager.list_tools(force_refresh=force_refresh)
+
+    text = "🔌 <b>MCP-серверы</b>\n\n"
+    for srv in servers:
+        kind = srv.url or " ".join([srv.command or ""] + srv.args)
+        text += f"• <b>{srv.name}</b>: <code>{kind[:60]}</code>\n"
+    text += f"\nИнструментов: <b>{len(tools)}</b>"
+    for t in tools[:30]:
+        text += f"\n• <code>{t['name']}</code> — {t['description'][:80]}"
+    if len(tools) > 30:
+        text += f"\n…и ещё {len(tools) - 30}"
+    text += "\n\nОбновить список: <code>/mcp refresh</code>"
+    await message.answer(text)
+
+
 @router.message(Command("usage"))
 async def cmd_usage(message: Message):
     """Расход токенов LLM за сегодня (UTC)"""

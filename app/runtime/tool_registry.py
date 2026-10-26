@@ -33,15 +33,22 @@ class ToolRegistry:
 
     async def execute(self, tool_name: str, args: dict) -> Any:
         """
-        Находит и вызывает навык по имени.
+        Находит и вызывает навык по имени; если навыка нет — внешний
+        MCP-инструмент '<server>__<tool>'.
 
-        Возвращает результат навыка или строку с описанием ошибки
+        Возвращает результат или строку с описанием ошибки
         (не бросает исключений — VM сам решит что делать через on_error).
         """
         skill_callable = self._loader.get_skill(tool_name)
 
         if skill_callable is None:
-            msg = f"Tool '{tool_name}' not found in SkillLoader"
+            # навыка нет — пробуем внешний MCP-инструмент
+            from app.core.mcp import mcp_manager
+
+            mcp_result = await mcp_manager.call_tool(tool_name, args)
+            if not mcp_result.startswith("[MCP]"):
+                return mcp_result
+            msg = f"Tool '{tool_name}' not found in SkillLoader/MCP ({mcp_result})"
             logger.warning(msg)
             return f"[ToolRegistry] {msg}"
 

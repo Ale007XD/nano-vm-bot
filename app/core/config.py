@@ -366,6 +366,17 @@ class Settings(BaseSettings):
     # Skills
     SKILLS_DIR: str = Field(default="skills", description="Skills directory")
     MAX_SKILL_FILE_SIZE: int = Field(default=1048576, description="Max skill file size in bytes")
+
+    # External MCP tools (Model Context Protocol)
+    MCP_SERVERS: str = Field(
+        default="",
+        description=(
+            "JSON-список MCP-серверов одной строкой: "
+            '[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}] '
+            'или [{"name":"remote","url":"https://host/mcp"}]. '
+            "Требуется пакет mcp (Python 3.11+)"
+        ),
+    )
     
     # Logging
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")

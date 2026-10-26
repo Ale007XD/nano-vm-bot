@@ -36,6 +36,9 @@ pytest-asyncio==0.23.5
 # Web Scraping
 beautifulsoup4==4.12.3
 
+# External MCP tools (Python 3.11+ only; на 3.10 пропускается)
+mcp>=1.2; python_version >= "3.11"
+
 # YouTube
 youtube-transcript-api
 yt-dlp

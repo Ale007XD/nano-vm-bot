@@ -18,6 +18,9 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# uv — для stdio MCP-серверов (command:"uvx", например mcp-server-fetch)
+RUN pip install --no-cache-dir uv
+
 COPY . .
 
 RUN mkdir -p data logs skills/system skills/custom skills/external

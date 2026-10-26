@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.6.0 · **Тесты:** 126 passed 🟢 · ruff: clean
+**Версия:** 1.6.0 · **Тесты:** 148 passed 🟢 · ruff: clean
 
 ---
 
@@ -42,6 +42,10 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 
 🔌 **Multi-provider LLM:** Groq → OpenRouter → Anthropic → OpenAI, фоллбэк с ретраями, горячая замена ключей (`/providers`), выбор моделей по ролям (`/models`, персистентно в БД). Тело API-ошибок логируется.
 
+🧩 **Внешние навыки:**
+- **Agent Skills (SKILL.md)** — инструкционные навыки открытого стандарта [agentskills.io](https://agentskills.io/specification): папка в `skills/external/` или установка документом `.md` (админ); запуск из `/skills` — исполняет LLM по инструкции
+- **MCP-инструменты** ([Model Context Protocol](https://registry.modelcontextprotocol.io)) — внешние серверы (stdio / Streamable HTTP) через `MCP_SERVERS`; их инструменты доступны VM как `call_tool <server>__<tool>`, Planner видит их список; статус — `/mcp` (admin)
+
 ---
 
 ## Быстрый старт
@@ -65,7 +69,8 @@ docker compose logs -f
 |---------|----------|
 | `/start` | Запуск |
 | `/mode` | Смена агента (FastBot / PlanBot / SkillBot / Runtime VM) |
-| `/skills` | Менеджер навыков |
+| `/skills` | Менеджер навыков (в т.ч. SKILL.md-навыки) |
+| `/mcp` | Статус внешних MCP-инструментов, `/mcp refresh` (admin) |
 | `/memory` | Управление памятью |
 | `/providers` | Управление ключами LLM-провайдеров (admin) |
 | `/models` | Выбор моделей по ролям (admin) |
@@ -111,7 +116,7 @@ Alex-Nano-Bot/
 ├── skills/system/ custom/ external/
 ├── data/                     # bot.db, vector_store/ (volume-mounted)
 ├── logs/                     # (volume-mounted)
-├── tests/                    # 126 тестов: runtime, helpers, access, usage, bot
+├── tests/                    # 148 тестов: runtime, helpers, access, usage, mcp, bot
 ├── ruff.toml                 # зафиксированный набор правил линтера
 ├── docker-compose.yml
 ├── Dockerfile
@@ -122,7 +127,7 @@ Alex-Nano-Bot/
 
 ## CI/CD
 
-GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **126/126 passed 🟢**
+GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **148/148 passed 🟢**
 
 ---
 
@@ -139,6 +144,7 @@ GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) ·
 | `BOT_OPEN_ACCESS` | — | `false` | `true` — открытый режим: бот отвечает всем |
 | `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
 | `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
+| `MCP_SERVERS` | — | — | JSON-список MCP-серверов одной строкой: `[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}]` или `[{"name":"x","url":"https://host/mcp"}]` (stdio требует `uv`, уже в образе) |
 | `BOT_TIMEZONE` | — | `Europe/Moscow` | Зона времени в ответах и планировщике |
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |

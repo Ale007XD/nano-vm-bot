@@ -104,6 +104,7 @@ async def on_startup(bot: Bot):
         ("weekly", "Create weekly task"),
         ("providers", "Manage LLM providers (admin only)"),
         ("usage", "Your LLM token usage today"),
+        ("mcp", "External MCP tools status (admin only)"),
         ("limits", "Show daily limits (admin only)"),
         ("setlimit", "Set daily limit: messages|requests|tokens N (admin only)"),
         ("ban", "Block user by id (admin only)"),

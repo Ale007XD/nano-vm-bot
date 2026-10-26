@@ -193,6 +193,21 @@ async def handle_message(message: Message, state: FSMContext):
                 except Exception as e:
                     logger.warning(f"RAG extraction failed: {e}")
 
+                # --- MCP: доступные внешние инструменты для Planner ---
+                try:
+                    from app.core.mcp import mcp_manager
+
+                    mcp_tools = await mcp_manager.list_tools()
+                    if mcp_tools:
+                        tool_lines = "\n".join(
+                            f"- {t['name']}: {t['description']}" for t in mcp_tools[:20]
+                        )
+                        user_message_for_agent += (
+                            "\n\n[ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ call_tool]\n" + tool_lines
+                        )
+                except Exception as e:
+                    logger.warning(f"MCP tools listing failed: {e}")
+
                 program = await _planner.generate(
                     user_input=user_message_for_agent,
                     history=conversation_history,
@@ -718,6 +733,21 @@ async def handle_voice(message: Message, state: FSMContext):
                 except Exception as e:
                     logger.warning(f"RAG extraction failed: {e}")
                     transcribed_text_for_agent = transcribed_text
+
+                # --- MCP: доступные внешние инструменты для Planner ---
+                try:
+                    from app.core.mcp import mcp_manager
+
+                    mcp_tools = await mcp_manager.list_tools()
+                    if mcp_tools:
+                        tool_lines = "\n".join(
+                            f"- {t['name']}: {t['description']}" for t in mcp_tools[:20]
+                        )
+                        transcribed_text_for_agent += (
+                            "\n\n[ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ call_tool]\n" + tool_lines
+                        )
+                except Exception as e:
+                    logger.warning(f"MCP tools listing failed: {e}")
 
                 program = await _planner.generate(
                     user_input=transcribed_text_for_agent,
