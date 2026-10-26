@@ -31,7 +31,14 @@ from app.runtime import (
 )
 from app.runtime.planner import Planner
 from app.runtime.tool_registry import ToolRegistry
-from app.utils.helpers import sanitize_html, start_typing, stop_typing
+from app.utils.helpers import (
+    deliver_via_message as _deliver_summary,
+)
+from app.utils.helpers import (
+    sanitize_html,
+    start_typing,
+    stop_typing,
+)
 
 _vm_registry = default_registry()
 _vm = ExecutionVM(_vm_registry)
@@ -270,21 +277,6 @@ async def handle_message(message: Message, state: FSMContext):
         )
 
 
-async def _deliver_summary(processing_msg, text: str):
-    """Заменить статусное сообщение итоговым текстом (учитывая лимит 4096)."""
-    text = sanitize_html(text)
-    if len(text) > 4000:
-        await processing_msg.delete()
-        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                await processing_msg.answer(chunk)
-            else:
-                await processing_msg.answer(f"<i>(продолжение {i+1}/{len(chunks)})</i>\n\n{chunk}")
-    else:
-        await processing_msg.edit_text(text)
-
-
 @router.message(F.photo)
 async def handle_photo(message: Message):
     """Handle photo messages.
@@ -481,6 +473,46 @@ async def handle_document(message: Message):
         return
 
     doc = message.document
+
+    # --- Установка внешнего навыка Agent Skills (SKILL.md), только админ ---
+    if doc.file_name and doc.file_name.lower().endswith(".md"):
+        from app.core.access import is_admin
+
+        if not is_admin(user.id):
+            await message.answer("⛔ Устанавливать внешние навыки может только админ.")
+            return
+        if doc.file_size and doc.file_size > settings.MAX_SKILL_FILE_SIZE:
+            await message.answer("❌ Файл слишком большой для навыка.")
+            return
+
+        processing_msg = await message.answer("📥 Устанавливаю навык…")
+        temp_path = f"/tmp/skill_{user.id}_{doc.file_id}.md"
+        try:
+            file = await message.bot.get_file(doc.file_id)
+            await message.bot.download_file(file.file_path, temp_path)
+            with open(temp_path, encoding="utf-8") as fh:
+                content = fh.read()
+
+            from app.core.skills_loader import skill_loader
+
+            hint = os.path.splitext(doc.file_name)[0]
+            info = skill_loader.install_skill_md(hint, content)
+            await processing_msg.edit_text(
+                f"✅ Навык <b>{info.name}</b> установлен (SKILL.md, external).\n\n"
+                f"📝 {info.description}\n\n"
+                "Запуск: /skills → выбрать навык → «▶️ Запустить»."
+            )
+        except ValueError as e:
+            await processing_msg.edit_text(
+                f"❌ Файл не похож на SKILL.md: {e}"
+            )
+        except Exception as e:
+            logger.error(f"Error installing SKILL.md from {user.id}: {e}")
+            await processing_msg.edit_text("❌ Ошибка установки навыка.")
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        return
 
     if not doc.file_name or not doc.file_name.endswith(".json"):
         await message.answer(

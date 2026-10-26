@@ -44,6 +44,10 @@ class SkillInfo:
     is_active: bool = True
     file_path: Optional[str] = None
     callable: Optional[Callable] = None
+    # kind="py" — исполняемый навык (run(context)); kind="skillmd" —
+    # инструкционный навык формата Agent Skills (SKILL.md), исполняет LLM
+    kind: str = "py"
+    instructions: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +96,20 @@ class SkillLoader:
             if not os.path.isdir(directory):
                 continue
             for filename in sorted(os.listdir(directory)):
+                path = os.path.join(directory, filename)
+                # Инструкционные навыки Agent Skills: папка с SKILL.md
+                if os.path.isdir(path) and os.path.isfile(os.path.join(path, "SKILL.md")):
+                    try:
+                        info = self._load_skill_md_folder(path, source)
+                        if info:
+                            self._skills[info.name] = info
+                            loaded += 1
+                            logger.info("Skill loaded: %s (%s, SKILL.md)", info.name, source)
+                    except Exception as e:
+                        logger.warning("Failed to load SKILL.md skill %s: %s", filename, e)
+                    continue
                 if not filename.endswith(".py") or filename.startswith("_"):
                     continue
-                path = os.path.join(directory, filename)
                 try:
                     info = self._load_skill_file(path, source)
                     if info:
@@ -106,6 +121,105 @@ class SkillLoader:
 
         logger.info("Skills loaded: %d total", loaded)
         return loaded
+
+    # ------------------------------------------------------------------
+    # SKILL.md (Agent Skills, agentskills.io)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def parse_skill_md(text: str) -> dict:
+        """SKILL.md → {"name", "description", "instructions"}.
+
+        Frontmatter (YAML между --- маркерами) опционален; name/description
+        при отсутствии берутся по месту (имя папки / первая строка).
+        """
+        lines = text.splitlines()
+        meta: Dict[str, Any] = {}
+        body_start = 0
+        if lines and lines[0].strip() == "---":
+            for i in range(1, len(lines)):
+                if lines[i].strip() in ("---", "..."):
+                    fm_text = "\n".join(lines[1:i])
+                    meta = SkillLoader._parse_frontmatter(fm_text)
+                    body_start = i + 1
+                    break
+
+        instructions = "\n".join(lines[body_start:]).strip()
+        return {"meta": meta, "instructions": instructions}
+
+    @staticmethod
+    def _parse_frontmatter(fm_text: str) -> Dict[str, Any]:
+        try:
+            import yaml
+
+            data = yaml.safe_load(fm_text)
+            return data if isinstance(data, dict) else {}
+        except ImportError:
+            # fallback без PyYAML: простые "key: value" строки
+            result: Dict[str, Any] = {}
+            for line in fm_text.splitlines():
+                if ":" in line and not line.startswith((" ", "\t", "-")):
+                    key, _, value = line.partition(":")
+                    result[key.strip()] = value.strip().strip("\"'")
+            return result
+
+    def _load_skill_md_folder(self, skill_dir: str, source: str) -> Optional[SkillInfo]:
+        """Загружает навык из папки с SKILL.md (инструкционный, исполняет LLM)."""
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(skill_md_path, encoding="utf-8") as fh:
+            text = fh.read()
+
+        parsed = self.parse_skill_md(text)
+        meta = parsed["meta"]
+        instructions = parsed["instructions"]
+        folder_name = os.path.basename(os.path.normpath(skill_dir))
+
+        name = str(meta.get("name") or folder_name).strip()
+        first_line = instructions.splitlines()[0][:200] if instructions else ""
+        description = str(meta.get("description") or first_line).strip() or f"External skill {name}"
+
+        if not instructions:
+            raise ValueError("SKILL.md has no instructions body")
+
+        return SkillInfo(
+            name=name,
+            description=description,
+            category=str(meta.get("category") or "external-skill"),
+            source=source,
+            version=str(meta.get("version") or "1.0.0"),
+            author=str(meta.get("author") or "external"),
+            commands=[],
+            is_active=True,
+            file_path=skill_md_path,
+            callable=None,
+            kind="skillmd",
+            instructions=instructions,
+        )
+
+    def install_skill_md(self, name_hint: str, content: str) -> SkillInfo:
+        """Сохраняет присланный SKILL.md в skills/external/<name>/ и загружает.
+
+        Возвращает SkillInfo; ValueError — если файл не выглядит как SKILL.md.
+        """
+        parsed = self.parse_skill_md(content)
+        meta = parsed["meta"]
+        instructions = parsed["instructions"]
+
+        name = str(meta.get("name") or name_hint).strip()
+        if not is_valid_skill_name(name):
+            name = re.sub(r"[^a-zA-Z0-9_]", "_", name).strip("_") or "external_skill"
+        if not instructions:
+            raise ValueError("нет блока инструкций после frontmatter")
+
+        skill_dir = os.path.join(_SKILL_DIRS["external"], name)
+        os.makedirs(skill_dir, exist_ok=True)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        info = self._load_skill_md_folder(skill_dir, "external")
+        self._skills[info.name] = info
+        logger.info("SKILL.md skill installed: %s", info.name)
+        return info
 
     def _load_skill_file(self, path: str, source: str) -> Optional[SkillInfo]:
         """Импортирует .py как модуль и извлекает метаданные."""

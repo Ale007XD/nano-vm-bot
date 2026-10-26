@@ -191,13 +191,16 @@ def format_skill_info(skill_info) -> str:
     text += f"📂 Источник: {skill_info.source}\n"
     text += f"🔢 Версия: {skill_info.version}\n"
     text += f"👤 Автор: {skill_info.author}\n"
-    
+
+    if getattr(skill_info, "kind", "py") == "skillmd":
+        text += "🧾 Тип: инструкционный (SKILL.md, исполняет LLM)\n"
+
     if skill_info.commands:
         text += f"⌨️ Команды: {', '.join(skill_info.commands)}\n"
-    
+
     status = "✅ Активен" if skill_info.is_active else "❌ Неактивен"
     text += f"📊 Статус: {status}\n"
-    
+
     return text
 
 
@@ -226,6 +229,21 @@ def format_memory(memory) -> str:
 # ---------------------------------------------------------------------------
 # Индикатор «печатает…» и контекст текущего времени
 # ---------------------------------------------------------------------------
+
+async def deliver_via_message(processing_msg, text: str) -> None:
+    """Заменить статусное сообщение итоговым текстом (учитывая лимит 4096)."""
+    text = sanitize_html(text)
+    if len(text) > 4000:
+        await processing_msg.delete()
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await processing_msg.answer(chunk)
+            else:
+                await processing_msg.answer(f"<i>(продолжение {i+1}/{len(chunks)})</i>\n\n{chunk}")
+    else:
+        await processing_msg.edit_text(text)
+
 
 async def _typing_loop(bot, chat_id: int, interval: float = 4.0, max_seconds: float = 180.0):
     # Telegram гасит chat action через ~5 секунд — для долгих ответов
