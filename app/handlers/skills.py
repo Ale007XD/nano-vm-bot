@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.core.access import check_daily_limit, user_allowed
+from app.core.access import check_daily_limit, is_admin, user_allowed
 from app.core.config import settings
 from app.core.llm_client_v2 import Message as LLMMessage
 from app.core.llm_client_v2 import llm_client
@@ -36,6 +36,23 @@ from app.utils.states import ChatState, SkillCreation, SkillEdit
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+async def _require_admin_cb(callback: CallbackQuery) -> bool:
+    """Гейт для callback'ов, меняющих/раскрывающих код навыков. Только админ."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только для администратора", show_alert=True)
+        return False
+    return True
+
+
+async def _require_admin_msg(message: Message, state: FSMContext) -> bool:
+    """Гейт для шагов FSM создания/правки навыка. Не-админ — сброс состояния."""
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        await message.answer("⛔ Создавать и изменять навыки может только администратор.")
+        return False
+    return True
 
 
 @router.callback_query(F.data == "skills:menu")
@@ -107,6 +124,8 @@ async def skill_detail(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("skill:code:"))
 async def skill_code(callback: CallbackQuery):
     """Show skill code"""
+    if not await _require_admin_cb(callback):
+        return
     skill_name = callback.data.split(":")[2]
     
     code = await skill_loader.get_skill_code(skill_name)
@@ -131,6 +150,8 @@ async def skill_code(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("skill:delete:"))
 async def skill_delete_confirm(callback: CallbackQuery):
     """Confirm skill deletion"""
+    if not await _require_admin_cb(callback):
+        return
     skill_name = callback.data.split(":")[2]
     
     await callback.message.edit_text(
@@ -148,7 +169,9 @@ async def skill_delete_confirm(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("skill:confirm_delete:"))
 async def skill_delete(callback: CallbackQuery):
     """Delete skill"""
-    skill_name = callback.data.split(":")[3]
+    if not await _require_admin_cb(callback):
+        return
+    skill_name = callback.data.split(":")[2]
     
     try:
         await skill_loader.delete_skill(skill_name)
@@ -168,6 +191,8 @@ async def skill_delete(callback: CallbackQuery):
 @router.callback_query(F.data == "skills:create")
 async def skill_create_start(callback: CallbackQuery, state: FSMContext):
     """Start skill creation"""
+    if not await _require_admin_cb(callback):
+        return
     await state.set_state(SkillCreation.waiting_name)
     await callback.message.edit_text(
         "➕ <b>Создать новый навык</b>\n\n"
@@ -184,6 +209,8 @@ async def skill_create_start(callback: CallbackQuery, state: FSMContext):
 @router.message(SkillCreation.waiting_name)
 async def skill_create_name(message: Message, state: FSMContext):
     """Process skill name"""
+    if not await _require_admin_msg(message, state):
+        return
     name = message.text.strip()
     
     if not is_valid_skill_name(name):
@@ -211,6 +238,8 @@ async def skill_create_name(message: Message, state: FSMContext):
 @router.message(SkillCreation.waiting_description)
 async def skill_create_description(message: Message, state: FSMContext):
     """Process skill description"""
+    if not await _require_admin_msg(message, state):
+        return
     description = message.text.strip()
     
     await state.update_data(skill_description=description)
@@ -231,6 +260,8 @@ async def skill_create_description(message: Message, state: FSMContext):
 @router.message(SkillCreation.waiting_code)
 async def skill_create_code(message: Message, state: FSMContext):
     """Process skill code and create skill"""
+    if not await _require_admin_msg(message, state):
+        return
     code = message.text
     
     data = await state.get_data()
@@ -380,6 +411,8 @@ async def execute_skillmd(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("skill:edit:"))
 async def skill_edit_start(callback: CallbackQuery, state: FSMContext):
     """Start skill editing"""
+    if not await _require_admin_cb(callback):
+        return
     skill_name = callback.data.split(":")[2]
     skill_info = skill_loader.get_skill_info(skill_name)
 
@@ -412,6 +445,8 @@ async def skill_edit_start(callback: CallbackQuery, state: FSMContext):
 @router.message(SkillEdit.editing_code)
 async def skill_edit_save(message: Message, state: FSMContext):
     """Save edited skill code"""
+    if not await _require_admin_msg(message, state):
+        return
     data = await state.get_data()
     skill_name = data["skill_name"]
     new_code = message.text

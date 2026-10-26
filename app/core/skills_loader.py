@@ -306,6 +306,8 @@ class SkillLoader:
         category: str = "custom",
         author: str = "user",
     ) -> SkillInfo:
+        if not is_valid_skill_name(name):
+            raise ValueError(f"Invalid skill name: {name!r}")
         custom_dir = _SKILL_DIRS["custom"]
         os.makedirs(custom_dir, exist_ok=True)
         file_path = os.path.join(custom_dir, f"{name}.py")
@@ -473,7 +475,7 @@ class SkillLoaderFacade:
 # ---------------------------------------------------------------------------
 
 def is_valid_skill_name(name: str) -> bool:
-    return bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name))
+    return bool(re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", name))
 
 
 # ---------------------------------------------------------------------------

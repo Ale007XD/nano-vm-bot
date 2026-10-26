@@ -180,7 +180,7 @@ def parse_code_from_message(text: str) -> Optional[str]:
 
 def is_valid_skill_name(name: str) -> bool:
     """Check if skill name is valid"""
-    return bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name))
+    return bool(re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_]*', name))
 
 
 def format_skill_info(skill_info) -> str:

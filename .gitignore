@@ -96,4 +96,4 @@ logs/*.log
 !skills/external/.gitkeep
 
 patches/
-*.Zone.Identifier
+*:Zone.Identifier
