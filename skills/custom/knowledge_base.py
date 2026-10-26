@@ -53,7 +53,7 @@ PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS articles (
     id          TEXT PRIMARY KEY,
-    url         TEXT UNIQUE NOT NULL,
+    url         TEXT NOT NULL,
     title       TEXT,
     summary     TEXT,
     full_text   TEXT,
@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS articles (
     user_id     INTEGER NOT NULL,
     added_at    TEXT NOT NULL,
     refreshed_at TEXT,
-    is_stale    INTEGER DEFAULT 0       -- 1 если данные устарели (>30 дней)
+    is_stale    INTEGER DEFAULT 0,      -- 1 если данные устарели (>30 дней)
+    UNIQUE(user_id, url)                -- один URL у разных пользователей — разные записи
 );
 
 CREATE TABLE IF NOT EXISTS article_links (
@@ -83,6 +84,24 @@ CREATE INDEX IF NOT EXISTS idx_links_to       ON article_links(to_id);
 """
 
 
+_schema_warned = False
+
+
+def _warn_if_legacy_schema(conn) -> None:
+    """Старая схема (url UNIQUE глобально) ломает добавление одной ссылки разными
+    пользователями. Миграции нет: удалите data/knowledge_base.db (проект greenfield)."""
+    global _schema_warned
+    if _schema_warned:
+        return
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name='articles'").fetchone()
+    if row and "UNIQUE(user_id, url)" not in row[0]:
+        logger.warning(
+            "knowledge_base: устаревшая схема БД (%s). Удалите файл БД, чтобы "
+            "статьи разных пользователей не конфликтовали.", _DB_PATH,
+        )
+    _schema_warned = True
+
+
 @contextmanager
 def _db():
     os.makedirs(os.path.dirname(_DB_PATH) or ".", exist_ok=True)
@@ -90,6 +109,7 @@ def _db():
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(_DDL)
+        _warn_if_legacy_schema(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -99,8 +119,21 @@ def _db():
         conn.close()
 
 
-def _article_id(url: str) -> str:
-    return hashlib.sha1(url.encode()).hexdigest()[:12]
+def _e(value) -> str:
+    """Экранирование недоверенного текста (страницы, ответы LLM) для HTML-режима Telegram."""
+    return html_escape("" if value is None else str(value), quote=True)
+
+
+def _link(url: str, label: str = "открыть") -> str:
+    """Безопасная ссылка: только http(s), атрибут в двойных кавычках и экранирован."""
+    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+        return ""
+    return f'<a href="{html_escape(url, quote=True)}">{label}</a>'
+
+
+def _article_id(url: str, user_id: int) -> str:
+    """ID статьи привязан к пользователю: одна ссылка у разных людей — разные записи."""
+    return hashlib.sha1(f"{user_id}:{url}".encode()).hexdigest()[:12]
 
 
 # ─── Парсинг URL из текста ────────────────────────────────────────────────────
@@ -221,19 +254,24 @@ def _build_links(article_id: str, tags: list, topics: list, user_id: int):
 # ─── Команды скилла ───────────────────────────────────────────────────────────
 
 async def _cmd_add(url: str, user_id: int, comment: str, llm_client) -> str:
-    art_id = _article_id(url)
+    art_id = _article_id(url, user_id)
 
     with _db() as conn:
-        existing = conn.execute("SELECT id, title FROM articles WHERE id=?", (art_id,)).fetchone()
+        existing = conn.execute(
+            "SELECT id, title FROM articles WHERE id=? AND user_id=?", (art_id, user_id)
+        ).fetchone()
         if existing:
-            return f"⚠️ Статья уже в базе: <b>{existing['title'] or url}</b>\nID: <code>{art_id}</code>"
+            return (
+                f"⚠️ Статья уже в базе: <b>{_e(existing['title'] or url)}</b>\n"
+                f"ID: <code>{art_id}</code>"
+            )
 
     try:
         title, text = await _fetch_page(url)
     except UnsafeURLError as e:
         return f"⛔ Этот адрес нельзя добавить: {html_escape(str(e))}"
     if not text:
-        return f"❌ Не удалось получить содержимое страницы:\n<code>{url}</code>"
+        return f"❌ Не удалось получить содержимое страницы:\n<code>{_e(url)}</code>"
 
     entities = await _extract_entities(text, title, llm_client)
     key_facts = await _verify_facts(entities.get("key_facts", []), title)
@@ -277,16 +315,16 @@ async def _cmd_add(url: str, user_id: int, comment: str, llm_client) -> str:
     # Граф
     _build_links(art_id, entities.get("tags", []), entities.get("topics", []), user_id)
 
-    tags_str = " ".join(f"#{t}" for t in entities.get("tags", [])[:5])
-    topics_str = ", ".join(entities.get("topics", [])[:3])
-    facts_str = "\n".join(f"• {f}" for f in key_facts[:3])
+    tags_str = _e(" ".join(f"#{t}" for t in entities.get("tags", [])[:5]))
+    topics_str = _e(", ".join(entities.get("topics", [])[:3]))
+    facts_str = "\n".join(f"• {_e(f)}" for f in key_facts[:3])
 
     return (
         f"✅ <b>Статья добавлена в базу знаний</b>\n\n"
-        f"📰 <b>{title}</b>\n"
-        f"🌐 {source}\n"
+        f"📰 <b>{_e(title)}</b>\n"
+        f"🌐 {_e(source)}\n"
         f"🆔 <code>{art_id}</code>\n\n"
-        f"📝 {entities.get('summary','')}\n\n"
+        f"📝 {_e(entities.get('summary',''))}\n\n"
         f"🏷 {tags_str}\n"
         f"📂 Темы: {topics_str}\n\n"
         f"🔑 <b>Ключевые факты:</b>\n{facts_str}"
@@ -314,15 +352,15 @@ async def _cmd_search(query: str, user_id: int) -> str:
             """, (user_id, f"%{query}%", f"%{query}%", f"%{query}%")).fetchall()
 
         if not rows:
-            return f"🔍 Ничего не найдено по запросу: <i>{query}</i>"
+            return f"🔍 Ничего не найдено по запросу: <i>{_e(query)}</i>"
 
         out = f"🔍 <b>Найдено {len(rows)} статей (текстовый поиск):</b>\n\n"
         for r in rows:
-            tags = " ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3])
-            out += f"📰 <b>{r['title'] or r['url']}</b>\n"
-            out += f"   {r['summary'][:120]}...\n"
+            tags = _e(" ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3]))
+            out += f"📰 <b>{_e(r['title'] or r['url'])}</b>\n"
+            out += f"   {_e((r['summary'] or '')[:120])}...\n"
             out += f"   {tags}\n"
-            out += f"   🆔 <code>{r['id']}</code> | <a href='{r['url']}'>открыть</a>\n\n"
+            out += f"   🆔 <code>{r['id']}</code> | {_link(r['url'])}\n\n"
         return out
 
     out = f"🔍 <b>Найдено {len(results)} статей:</b>\n\n"
@@ -332,15 +370,18 @@ async def _cmd_search(query: str, user_id: int) -> str:
         relevance = round((1 - mem["distance"]) * 100)
         # Дополняем из SQLite
         with _db() as conn:
-            row = conn.execute("SELECT title, summary, tags FROM articles WHERE id=?", (art_id,)).fetchone()
+            row = conn.execute(
+                "SELECT title, summary, tags FROM articles WHERE id=? AND user_id=?",
+                (art_id, user_id),
+            ).fetchone()
         if row:
-            tags = " ".join(f"#{t}" for t in json.loads(row["tags"] or "[]")[:3])
-            out += f"📰 <b>{row['title'] or url}</b>\n"
-            out += f"   {row['summary'][:120]}...\n"
+            tags = _e(" ".join(f"#{t}" for t in json.loads(row["tags"] or "[]")[:3]))
+            out += f"📰 <b>{_e(row['title'] or url)}</b>\n"
+            out += f"   {_e((row['summary'] or '')[:120])}...\n"
             out += f"   {tags} | релевантность: {relevance}%\n"
-            out += f"   🆔 <code>{art_id}</code>"
+            out += f"   🆔 <code>{_e(art_id)}</code>"
             if url:
-                out += f" | <a href='{url}'>открыть</a>"
+                out += f" | {_link(url)}"
             out += "\n\n"
     return out
 
@@ -351,7 +392,7 @@ async def _cmd_related(art_id: str, user_id: int) -> str:
             "SELECT title, url FROM articles WHERE id=? AND user_id=?", (art_id, user_id)
         ).fetchone()
         if not base:
-            return f"❌ Статья <code>{art_id}</code> не найдена."
+            return f"❌ Статья <code>{_e(art_id)}</code> не найдена."
 
         links = conn.execute("""
             SELECT a.id, a.title, a.url, a.tags, al.weight, al.link_type
@@ -362,17 +403,17 @@ async def _cmd_related(art_id: str, user_id: int) -> str:
         """, (art_id, user_id)).fetchall()
 
     if not links:
-        return f"🔗 Для статьи <b>{base['title']}</b> связей пока нет.\nДобавьте больше статей по схожим темам."
+        return f"🔗 Для статьи <b>{_e(base['title'])}</b> связей пока нет.\nДобавьте больше статей по схожим темам."
 
-    out = f"🔗 <b>Связанные статьи для:</b>\n<i>{base['title']}</i>\n\n"
+    out = f"🔗 <b>Связанные статьи для:</b>\n<i>{_e(base['title'])}</i>\n\n"
     for r in links:
-        tags = " ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3])
+        tags = _e(" ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3]))
         strength = round(r["weight"] * 100)
-        out += f"📰 <b>{r['title'] or r['url']}</b>\n"
-        out += f"   {tags} | связь: {strength}% ({r['link_type']})\n"
+        out += f"📰 <b>{_e(r['title'] or r['url'])}</b>\n"
+        out += f"   {tags} | связь: {strength}% ({_e(r['link_type'])})\n"
         out += f"   🆔 <code>{r['id']}</code>"
         if r["url"]:
-            out += f" | <a href='{r['url']}'>открыть</a>"
+            out += f" | {_link(r['url'])}"
         out += "\n\n"
     return out
 
@@ -384,7 +425,7 @@ async def _cmd_refresh(art_id: str, user_id: int, llm_client) -> str:
             (art_id, user_id)
         ).fetchone()
         if not row:
-            return f"❌ Статья <code>{art_id}</code> не найдена."
+            return f"❌ Статья <code>{_e(art_id)}</code> не найдена."
 
     try:
         title, text = await _fetch_page(row["url"])
@@ -402,7 +443,7 @@ async def _cmd_refresh(art_id: str, user_id: int, llm_client) -> str:
             UPDATE articles SET
                 title=?, summary=?, full_text=?, tags=?, topics=?,
                 key_facts=?, refreshed_at=?, is_stale=0
-            WHERE id=?
+            WHERE id=? AND user_id=?
         """, (
             title,
             entities.get("summary", ""),
@@ -411,11 +452,11 @@ async def _cmd_refresh(art_id: str, user_id: int, llm_client) -> str:
             json.dumps(entities.get("topics", []), ensure_ascii=False),
             json.dumps(key_facts, ensure_ascii=False),
             datetime.now().isoformat(),
-            art_id
+            art_id, user_id
         ))
 
     _build_links(art_id, entities.get("tags", []), entities.get("topics", []), user_id)
-    return f"🔄 <b>Статья обновлена:</b> <code>{art_id}</code>\n📰 {title}"
+    return f"🔄 <b>Статья обновлена:</b> <code>{_e(art_id)}</code>\n📰 {_e(title)}"
 
 
 async def _cmd_stats(user_id: int) -> str:
@@ -441,8 +482,8 @@ async def _cmd_stats(user_id: int) -> str:
             WHERE user_id=? GROUP BY source_name ORDER BY cnt DESC LIMIT 5
         """, (user_id,)).fetchall()
 
-    tags_str = " ".join(f"#{t}({c})" for t, c in top_tags)
-    sources_str = "\n".join(f"  • {r['source_name']}: {r['cnt']}" for r in sources)
+    tags_str = _e(" ".join(f"#{t}({c})" for t, c in top_tags))
+    sources_str = "\n".join(f"  • {_e(r['source_name'])}: {r['cnt']}" for r in sources)
 
     return (
         f"📊 <b>База знаний</b>\n\n"
@@ -523,13 +564,13 @@ async def _cmd_list(user_id: int, tag_filter: Optional[str] = None) -> str:
     if not rows:
         return "📭 База знаний пуста. Перешлите статью с URL или используйте <code>kb add &lt;url&gt;</code>"
 
-    header = f"📋 <b>Статьи{f' по #{tag_filter}' if tag_filter else ''} ({len(rows)}):</b>\n\n"
+    header = f"📋 <b>Статьи{f' по #{_e(tag_filter)}' if tag_filter else ''} ({len(rows)}):</b>\n\n"
     out = header
     for r in rows:
-        tags = " ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3])
+        tags = _e(" ".join(f"#{t}" for t in json.loads(r["tags"] or "[]")[:3]))
         date = r["added_at"][:10]
-        out += f"📰 <b>{r['title'] or r['url']}</b>\n"
-        out += f"   {r['source_name']} | {date} | {tags}\n"
+        out += f"📰 <b>{_e(r['title'] or r['url'])}</b>\n"
+        out += f"   {_e(r['source_name'])} | {date} | {tags}\n"
         out += f"   🆔 <code>{r['id']}</code>\n\n"
     return out
 
