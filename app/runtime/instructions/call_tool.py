@@ -36,7 +36,8 @@ class CallToolInstruction(BaseInstruction):
                 .build()
             )
 
-        result = await ctx.tools.execute(tool_name, args)
+        # user_id берём из StateContext, а не из args (args генерирует planner-LLM)
+        result = await ctx.tools.execute(tool_name, args, user_id=ctx.user_id)
 
         # ToolRegistry возвращает строку с префиксом при ошибке поиска/выполнения
         if isinstance(result, str) and result.startswith("[ToolRegistry]"):

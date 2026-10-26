@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.agents.router import agent_router
-from app.core.access import check_daily_limit, user_allowed
+from app.core.access import can_use_tool, check_daily_limit, user_allowed
 from app.core.config import settings
 from app.core.database import async_session_maker, get_or_create_user, save_message
 from app.core.llm_client_v2 import llm_client
@@ -197,7 +197,10 @@ async def handle_message(message: Message, state: FSMContext):
                 try:
                     from app.core.mcp import mcp_manager
 
-                    mcp_tools = await mcp_manager.list_tools()
+                    mcp_tools = [
+                        t for t in await mcp_manager.list_tools()
+                        if can_use_tool(user.id, t["name"])
+                    ]
                     if mcp_tools:
                         tool_lines = "\n".join(
                             f"- {t['name']}: {t['description']}" for t in mcp_tools[:20]
@@ -738,7 +741,10 @@ async def handle_voice(message: Message, state: FSMContext):
                 try:
                     from app.core.mcp import mcp_manager
 
-                    mcp_tools = await mcp_manager.list_tools()
+                    mcp_tools = [
+                        t for t in await mcp_manager.list_tools()
+                        if can_use_tool(user.id, t["name"])
+                    ]
                     if mcp_tools:
                         tool_lines = "\n".join(
                             f"- {t['name']}: {t['description']}" for t in mcp_tools[:20]

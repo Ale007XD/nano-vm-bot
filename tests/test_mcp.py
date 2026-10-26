@@ -89,7 +89,10 @@ class TestMCPManagerWithoutPackage:
 
 class TestToolRegistryMcpFallback:
     @pytest.mark.asyncio
-    async def test_unknown_tool_mentions_mcp(self):
+    async def test_unknown_tool_mentions_mcp(self, monkeypatch):
+        import sys
+
+        monkeypatch.setattr(sys.modules["app.core.config"].settings, "ADMIN_IDS", [1])
         from app.runtime.tool_registry import ToolRegistry
 
         loader = MagicMock()
@@ -97,6 +100,6 @@ class TestToolRegistryMcpFallback:
         loader.list_skills.return_value = []
         registry = ToolRegistry(loader)
 
-        result = await registry.execute("ghost__tool", {})
+        result = await registry.execute("ghost__tool", {}, user_id=1)
         assert result.startswith("[ToolRegistry]")
         assert "ghost__tool" in result

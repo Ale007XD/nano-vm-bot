@@ -630,6 +630,14 @@ class TestPlannerParse:
 # ToolRegistry + CallToolInstruction (P-6)
 # ===========================================================================
 
+@pytest.fixture
+def _admin_user(monkeypatch):
+    """Пользователь ctx (user_id=1 / 42) — админ: тесты проверяют проксирование, не политику."""
+    import sys
+    monkeypatch.setattr(sys.modules["app.core.config"].settings, "ADMIN_IDS", [1, 42])
+
+
+@pytest.mark.usefixtures("_admin_user")
 class TestToolRegistry:
     """ToolRegistry проксирует вызовы в SkillLoader."""
 
@@ -652,20 +660,20 @@ class TestToolRegistry:
     async def test_execute_known_sync_tool(self):
         def my_tool(args): return f"ok:{args}"
         registry = self._make_registry({"my_tool": my_tool})
-        result = await registry.execute("my_tool", {"x": 1})
-        assert result == "ok:{'x': 1}"
+        result = await registry.execute("my_tool", {"x": 1}, user_id=1)
+        assert result == "ok:{'x': 1, 'user_id': 1}"
 
     @pytest.mark.asyncio
     async def test_execute_known_async_tool(self):
         async def async_tool(args): return "async_ok"
         registry = self._make_registry({"async_tool": async_tool})
-        result = await registry.execute("async_tool", {})
+        result = await registry.execute("async_tool", {}, user_id=1)
         assert result == "async_ok"
 
     @pytest.mark.asyncio
     async def test_execute_unknown_tool_returns_error_string(self):
         registry = self._make_registry({})
-        result = await registry.execute("ghost", {})
+        result = await registry.execute("ghost", {}, user_id=1)
         assert isinstance(result, str)
         assert "[ToolRegistry]" in result
         assert "ghost" in result
@@ -674,7 +682,7 @@ class TestToolRegistry:
     async def test_execute_tool_exception_returns_error_string(self):
         def broken(args): raise RuntimeError("boom")
         registry = self._make_registry({"broken": broken})
-        result = await registry.execute("broken", {})
+        result = await registry.execute("broken", {}, user_id=1)
         assert "[ToolRegistry]" in result
         assert "boom" in result
 
@@ -695,6 +703,7 @@ class TestToolRegistry:
         assert "hidden" not in tools
 
 
+@pytest.mark.usefixtures("_admin_user")
 class TestCallToolInstruction:
     """CallToolInstruction интегрируется с ToolRegistry."""
 

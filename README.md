@@ -154,6 +154,7 @@ GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) ·
 | `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
 | `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
 | `MCP_SERVERS` | — | — | JSON-список MCP-серверов одной строкой: `[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}]` или `[{"name":"x","url":"https://host/mcp"}]` (stdio требует `uv`, уже в образе) |
+| `RUNTIME_USER_TOOLS` | — | `validated_answer` | Инструменты `call_tool` в Runtime VM, доступные не-админам (через запятую; MCP — `server__tool`). Админам доступны все; `user_id` в навык всегда подставляется из контекста, а не из ответа planner |
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель демо-бота витрины |
 | `CORPUS_CHUNK_SIZE` | — | `1200` | Размер чанка корпуса (символы) |

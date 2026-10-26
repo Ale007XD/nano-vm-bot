@@ -40,6 +40,32 @@ async def user_allowed(telegram_id: int) -> bool:
         return True
 
 
+DEFAULT_USER_TOOLS = frozenset({"validated_answer"})
+
+
+def user_tool_allowlist() -> frozenset:
+    """Инструменты call_tool, доступные не-админам (env RUNTIME_USER_TOOLS).
+
+    Строка через запятую; пустая строка — ничего. Нечитаемое значение
+    (не строка) — безопасный дефолт.
+    """
+    raw = getattr(settings, "RUNTIME_USER_TOOLS", None)
+    if not isinstance(raw, str):
+        return DEFAULT_USER_TOOLS
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
+
+
+def can_use_tool(telegram_id: int, tool_name: str) -> bool:
+    """Может ли пользователь вызвать инструмент из Runtime VM.
+
+    Админ — любой. Остальные — только из allowlist. Решение принимается по
+    ID из StateContext (не из аргументов, сгенерированных planner-LLM).
+    """
+    if is_admin(telegram_id):
+        return True
+    return tool_name in user_tool_allowlist()
+
+
 class LimitCheck(NamedTuple):
     allowed: bool
     message: Optional[str] = None

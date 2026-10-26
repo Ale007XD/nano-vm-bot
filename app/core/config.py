@@ -256,6 +256,15 @@ class Settings(BaseSettings):
         description="Суточный лимит сообщений на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
     )
 
+    RUNTIME_USER_TOOLS: str = Field(
+        default="validated_answer",
+        description=(
+            "Какие инструменты call_tool доступны НЕ-админам в Runtime VM "
+            "(имена через запятую; MCP — '<server>__<tool>'). Админы могут всё. "
+            "Пусто — обычным пользователям недоступен ни один инструмент"
+        ),
+    )
+
     @field_validator("ADMIN_IDS", mode="before")
     def parse_admin_ids(cls, v):
         if isinstance(v, int):
