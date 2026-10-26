@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install ruff
 
       - name: Run Ruff Check (autofix)
         run: ruff check --fix --unsafe-fixes .
