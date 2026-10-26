@@ -11,6 +11,7 @@ Usage: /monitor add https://example.com
        Команды: monitor list | monitor stop <id> | monitor
 """
 import asyncio
+import html
 import logging
 import os
 import re
@@ -20,6 +21,8 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
+
+from app.core.net_guard import FetchError, UnsafeURLError, assert_public_url, safe_fetch
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +80,13 @@ def _db():
 async def _check_url(url: str) -> tuple[bool, str]:
     """Проверяет доступность URL. Возвращает (ok, status_text)."""
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, http2=True) as client:
-            resp = await client.head(url)
-            return resp.status_code < 400, f"HTTP {resp.status_code}"
+        # SSRF-защита: проверка адреса на КАЖДОЙ проверке (DNS мог измениться)
+        resp = await safe_fetch(url, method="HEAD", timeout=10.0, total_timeout=20.0, max_bytes=0)
+        return resp.status_code < 400, f"HTTP {resp.status_code}"
+    except UnsafeURLError as e:
+        return False, f"Адрес заблокирован: {str(e)[:80]}"
+    except FetchError as e:
+        return False, str(e)[:80]
     except httpx.ConnectError:
         return False, "Соединение отклонено / таймаут"
     except httpx.HTTPStatusError as e:
@@ -176,10 +183,10 @@ def _ensure_monitor_running(notify_func):
         logger.info("🌐 Site monitor background loop started.")
 
 # ── Утилиты ───────────────────────────────────────────────────────────────
-_URL_RE = re.compile(r'https?://[^\s)]>')
+_URL_RE = re.compile(r'https?://[^\s)>\]"\']+')
 
 def _extract_urls(text: str) -> list[str]:
-    return _URL_RE.findall(text)
+    return [u.rstrip(".,;") for u in _URL_RE.findall(text)]
 
 # ── Точка входа ───────────────────────────────────────────────────────────
 async def run(context: Dict[str, Any]) -> str:
@@ -235,6 +242,12 @@ async def run(context: Dict[str, Any]) -> str:
             return "❌ Не удалось найти ссылку. Отправьте URL, начиная с <code>http://</code> или <code>https://</code>."
         
         url = urls[0]
+        try:
+            await assert_public_url(url)
+        except UnsafeURLError as e:
+            return f"⛔ Этот адрес нельзя мониторить: {html.escape(str(e))}"
+        except FetchError as e:
+            return f"❌ {html.escape(str(e))}"
         _pending_adds[user_id] = url
         return (
             f"📝 Сайт <code>{url}</code> готов к добавлению.\n\n"

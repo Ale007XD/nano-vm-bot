@@ -22,9 +22,10 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
+from html import escape as html_escape
 from typing import Optional
 
-import httpx
+from app.core.net_guard import FetchError, UnsafeURLError, safe_fetch
 
 SKILL_NAME = "knowledge_base"
 SKILL_DESCRIPTION = (
@@ -116,10 +117,12 @@ async def _fetch_page(url: str) -> tuple[str, str]:
     """Возвращает (title, text). text — первые 6000 символов body."""
     headers = {"User-Agent": "Mozilla/5.0 (compatible; KnowledgeBot/1.0)"}
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            r = await client.get(url, headers=headers)
-            r.raise_for_status()
-            html = r.text
+        r = await safe_fetch(url, headers=headers, timeout=20, max_bytes=2 * 1024 * 1024)
+        if r.status_code >= 400:
+            raise FetchError(f"HTTP {r.status_code}")
+        html = r.text
+    except UnsafeURLError:
+        raise  # отказ по политике — вызывающий покажет пользователю причину
     except Exception as e:
         logger.warning(f"fetch {url}: {e}")
         return "", ""
@@ -225,7 +228,10 @@ async def _cmd_add(url: str, user_id: int, comment: str, llm_client) -> str:
         if existing:
             return f"⚠️ Статья уже в базе: <b>{existing['title'] or url}</b>\nID: <code>{art_id}</code>"
 
-    title, text = await _fetch_page(url)
+    try:
+        title, text = await _fetch_page(url)
+    except UnsafeURLError as e:
+        return f"⛔ Этот адрес нельзя добавить: {html_escape(str(e))}"
     if not text:
         return f"❌ Не удалось получить содержимое страницы:\n<code>{url}</code>"
 
@@ -380,7 +386,10 @@ async def _cmd_refresh(art_id: str, user_id: int, llm_client) -> str:
         if not row:
             return f"❌ Статья <code>{art_id}</code> не найдена."
 
-    title, text = await _fetch_page(row["url"])
+    try:
+        title, text = await _fetch_page(row["url"])
+    except UnsafeURLError as e:
+        return f"⛔ Адрес статьи больше не проходит проверку: {html_escape(str(e))}"
     if not text:
         text = row["full_text"] or ""
         title = title or row["title"] or ""

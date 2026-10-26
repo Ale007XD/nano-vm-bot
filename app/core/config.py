@@ -265,6 +265,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    ALLOW_PRIVATE_URLS: bool = Field(
+        default=False,
+        description=(
+            "Разрешить навыкам (knowledge_base, site_monitor) ходить на внутренние "
+            "адреса (localhost, 10.x, 192.168.x, 169.254.x). По умолчанию запрещено (SSRF-защита)"
+        ),
+    )
+
     @field_validator("ADMIN_IDS", mode="before")
     def parse_admin_ids(cls, v):
         if isinstance(v, int):
