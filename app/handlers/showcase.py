@@ -10,10 +10,18 @@ from aiogram.types import Document, Message
 
 from app.core.access import user_allowed
 from app.core.config import settings
+from app.core.dialog import (
+    KIND_ANSWER,
+    KIND_ERROR,
+    KIND_NOT_FOUND,
+    KIND_QUESTION,
+    ROLE_BOT,
+    ROLE_CLIENT,
+)
+from app.core.dialog import history as dialog_history
 from app.core.llm_client_v2 import Message as LLMMessage
 from app.core.llm_client_v2 import llm_client
 from app.core.memory import vector_memory
-from app.core.operator import remember_question
 from app.core.usage import flush_usage, start_usage_session
 from app.handlers.operator import call_operator_keyboard, operator_enabled
 from app.utils.helpers import (
@@ -177,7 +185,7 @@ async def handle_message(message: Message):
         await message.answer("Пришлите вопрос текстом.")
         return
 
-    remember_question(message.from_user.id, text)
+    dialog_history.add(message.from_user.id, ROLE_CLIENT, text, KIND_QUESTION)
     escalate_kb = call_operator_keyboard() if operator_enabled() else None
     processing_msg = await message.answer("🔍 Ищу в базе знаний…")
     typing_task = start_typing(message.bot, message.chat.id)
@@ -186,6 +194,9 @@ async def handle_message(message: Message):
         docs = await vector_memory.search_corpus(text)
 
         if not docs:
+            dialog_history.add(
+                message.from_user.id, ROLE_BOT, "Ответа в базе знаний не нашлось.", KIND_NOT_FOUND
+            )
             await processing_msg.edit_text(
                 "Я не нашёл ответа на ваш вопрос в базе знаний. "
                 "Попробуйте переформулировать вопрос или обратитесь в поддержку.",
@@ -233,10 +244,14 @@ async def handle_message(message: Message):
         if sources:
             answer += "\n\n<b>Источники:</b>\n" + "\n".join(sources)
 
+        dialog_history.add(
+            message.from_user.id, ROLE_BOT, response.content, KIND_ANSWER, sources=sources
+        )
         await deliver_via_message(processing_msg, answer)
 
     except Exception as e:
         logger.error(f"Error in showcase handler: {e}")
+        dialog_history.add(message.from_user.id, ROLE_BOT, "Бот не смог ответить (ошибка).", KIND_ERROR)
         await processing_msg.edit_text(
             "⚠️ Ошибка при обработке вопроса. Попробуйте позже.",
             reply_markup=escalate_kb,

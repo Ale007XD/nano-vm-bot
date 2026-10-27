@@ -11,8 +11,9 @@ import pytest_asyncio
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core import ext_db
+from app.core import ext_db, handoff
 from app.core import operator as store
+from app.core.dialog import history
 from app.core.ext_db import ExtBase
 
 # пакет app.handlers тянет планировщик, которому нужна настоящая таймзона
@@ -51,7 +52,8 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(h, "user_allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(h, "_limiter", store.RateLimiter(max_events=3, window=60))
     h._warned_flood.clear()
-    store._questions.clear()
+    history._data.clear()
+    monkeypatch.setattr(handoff, "build_summary", AsyncMock(return_value=None))
 
 
 def make_bot():
@@ -109,21 +111,13 @@ class TestStore:
         t[0] = 11
         assert rl.allow(1)
 
-    def test_question_memory_bounded(self, monkeypatch):
-        monkeypatch.setattr(store, "_QUESTIONS_MAX", 3)
-        for i in range(5):
-            store.remember_question(i, f"q{i}")
-        assert store.last_question(0) == "" and store.last_question(4) == "q4"
-        store.remember_question(9, "x" * 1000)
-        assert len(store.last_question(9)) == 500
-
 
 # ------------------------------ эскалация --------------------------------- #
 class TestEscalation:
     @pytest.mark.asyncio
     async def test_open_creates_topic_and_session(self, sm):
         bot = make_bot()
-        store.remember_question(CLIENT, "где мой заказ?")
+        history.add(CLIENT, "client", "где мой заказ?")
         msg = make_msg(bot)
         await h.cmd_operator(msg)
         bot.create_forum_topic.assert_awaited_once()
@@ -136,7 +130,7 @@ class TestEscalation:
     @pytest.mark.asyncio
     async def test_card_escapes_html(self, sm):
         bot = make_bot()
-        store.remember_question(CLIENT, "<script>alert(1)</script>")
+        history.add(CLIENT, "client", "<script>alert(1)</script>")
         msg = make_msg(bot)
         msg.from_user.first_name = "<b>Ev</b>"
         await h.cmd_operator(msg)

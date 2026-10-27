@@ -19,9 +19,11 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.core import handoff, support_events
 from app.core import operator as store
 from app.core.access import user_allowed
 from app.core.config import settings
+from app.core.dialog import history
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +89,13 @@ def _display_name(user) -> str:
     return name[:60]
 
 
-async def _create_topic_and_card(bot, user, question: str) -> int:
+async def _create_topic_and_card(bot, user, turns) -> int:
     """Создать тему в группе поддержки, опубликовать карточку. Возвращает thread_id."""
     name = f"{_display_name(user)} · {user.id}"[:120]
     topic = await bot.create_forum_topic(chat_id=operator_chat_id(), name=name)
     thread_id = topic.message_thread_id
 
+    question = next((t.text for t in reversed(turns) if t.role == "client"), "")
     uname = f"@{html.escape(user.username)}" if user.username else "—"
     card = (
         "🆘 <b>Новое обращение</b>\n"
@@ -101,9 +104,27 @@ async def _create_topic_and_card(bot, user, question: str) -> int:
     )
     if question:
         card += f"Вопрос боту: <i>{html.escape(question[:300])}</i>\n"
+    transcript = handoff.render_transcript_html(turns)
+    if transcript:
+        card += "\nПереписка с ботом:\n" + transcript + "\n"
     card += "\nПишите ответ прямо в этой теме — он уйдёт клиенту. <code>/close</code> — завершить."
     await bot.send_message(operator_chat_id(), card, message_thread_id=thread_id)
     return thread_id
+
+
+async def _post_summary(bot, client_id: int, thread_id: int, turns) -> None:
+    """Резюме от LLM отдельным сообщением в теме. Любой сбой — не критичен."""
+    summary = await handoff.build_summary(turns)
+    if not summary:
+        return
+    try:
+        await store.set_summary(client_id, summary)
+        await bot.send_message(
+            operator_chat_id(), "🧾 <b>Резюме</b>\n" + html.escape(summary), message_thread_id=thread_id
+        )
+        await support_events.emit(support_events.SUMMARY, client_id=client_id, thread_id=thread_id, summary=summary)
+    except Exception as e:
+        logger.warning("summary post failed for %s: %s", client_id, e)
 
 
 async def _forward_to_topic(bot, session_row, message: Message) -> bool:
@@ -122,7 +143,7 @@ async def _forward_to_topic(bot, session_row, message: Message) -> bool:
             return False
     # тему удалили вручную — создаём новую и повторяем
     try:
-        thread_id = await _create_topic_and_card(bot, message.from_user, "")
+        thread_id = await _create_topic_and_card(bot, message.from_user, history.recent(message.from_user.id))
         await store.set_thread(message.from_user.id, thread_id)
         await bot.copy_message(
             chat_id=operator_chat_id(),
@@ -138,6 +159,8 @@ async def _forward_to_topic(bot, session_row, message: Message) -> bool:
 
 async def _end_session(bot, client_id: int, thread_id: Optional[int], notify_client: str) -> None:
     await store.close_session(client_id)
+    history.clear(client_id)
+    await support_events.emit(support_events.CLOSED, client_id=client_id, thread_id=thread_id)
     if thread_id is not None and operator_enabled():
         try:
             await bot.close_forum_topic(chat_id=operator_chat_id(), message_thread_id=thread_id)
@@ -164,8 +187,9 @@ async def start_escalation(bot, user, chat_id: int, reply) -> None:
         await reply("Вы уже на связи с оператором — просто пишите сюда. /endchat — вернуться к боту.")
         return
 
+    turns = history.recent(user.id)
     try:
-        thread_id = await _create_topic_and_card(bot, user, store.last_question(user.id))
+        thread_id = await _create_topic_and_card(bot, user, turns)
     except Exception as e:
         logger.error("operator topic creation failed: %s", e)
         await reply("⚠️ Не удалось связаться с оператором. Попробуйте позже.")
@@ -178,6 +202,8 @@ async def start_escalation(bot, user, chat_id: int, reply) -> None:
         "ответ придёт в этот чат. Сообщения видят сотрудники поддержки.\n\n"
         "/endchat — вернуться к боту."
     )
+    await support_events.emit(support_events.OPENED, client_id=user.id, thread_id=thread_id)
+    await _post_summary(bot, user.id, thread_id, turns)
 
 
 # ----------------------------- клиент ------------------------------------ #

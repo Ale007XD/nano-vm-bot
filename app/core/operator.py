@@ -13,11 +13,20 @@ Telegram-логика — в app/handlers/operator.py.
 from __future__ import annotations
 
 import time
-from collections import OrderedDict, deque
+from collections import deque
 from datetime import datetime, timezone
 from typing import Deque, Dict, Optional
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String, select, update
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    select,
+    update,
+)
 
 from app.core.ext_db import ExtBase, resolve_session_maker
 
@@ -36,6 +45,7 @@ class OperatorSession(ExtBase):
     thread_id = Column(Integer, nullable=False, index=True)  # message_thread_id темы в группе
     status = Column(String(8), nullable=False, default=STATUS_OPEN, index=True)
     client_name = Column(String(128), nullable=False, default="")
+    summary = Column(Text, nullable=False, default="")  # резюме для оператора (для веб-интерфейса)
     opened_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
@@ -60,8 +70,31 @@ async def open_session(
             row.thread_id = thread_id
             row.status = STATUS_OPEN
             row.client_name = client_name[:128]
+            row.summary = ""
             row.opened_at = _now()
         await s.commit()
+
+
+async def set_summary(client_id: int, summary: str, session_maker=None) -> None:
+    sm = resolve_session_maker(session_maker)
+    async with sm() as s:
+        await s.execute(
+            update(OperatorSession).where(OperatorSession.client_id == client_id).values(summary=summary)
+        )
+        await s.commit()
+
+
+async def list_open_sessions(limit: int = 100, session_maker=None) -> list:
+    """Открытые обращения (новые первыми) — для веб-интерфейса оператора."""
+    sm = resolve_session_maker(session_maker)
+    async with sm() as s:
+        rows = await s.execute(
+            select(OperatorSession)
+            .where(OperatorSession.status == STATUS_OPEN)
+            .order_by(OperatorSession.opened_at.desc())
+            .limit(limit)
+        )
+        return list(rows.scalars())
 
 
 async def get_open_by_client(client_id: int, session_maker=None) -> Optional[OperatorSession]:
@@ -128,21 +161,3 @@ class RateLimiter:
             return False
         q.append(now)
         return True
-
-
-# --------------------------------------------------------------------------- #
-# Последний вопрос клиента (для карточки обращения). Ограниченный LRU.
-# --------------------------------------------------------------------------- #
-_questions: "OrderedDict[int, str]" = OrderedDict()
-_QUESTIONS_MAX = 2000
-
-
-def remember_question(client_id: int, text: str) -> None:
-    _questions[client_id] = (text or "")[:500]
-    _questions.move_to_end(client_id)
-    while len(_questions) > _QUESTIONS_MAX:
-        _questions.popitem(last=False)
-
-
-def last_question(client_id: int) -> str:
-    return _questions.get(client_id, "")
