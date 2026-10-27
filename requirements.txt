@@ -1,5 +1,5 @@
 # Alex-Nano-Bot — runtime-зависимости (Python 3.12)
-# Проверено на актуальных версиях: чистая установка, pip check, pytest (156 passed),
+# Проверено на актуальных версиях: чистая установка, pip check, pytest (290 passed),
 # реальный MCP stdio/streamable-http, ChromaDB PersistentClient.
 
 # Telegram Bot

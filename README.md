@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.8.0 · **Тесты:** 156 passed 🟢 · ruff: clean
+**Версия:** 1.8.0 · **Тесты:** 290 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -32,7 +32,8 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 📚 **Контент:**
 - Пересланное фото с подписью: подпись с URL → статья в базу знаний + резюме; подпись без URL → резюме текста; без подписи → vision-анализ (Groq)
 - Посты в отслеживаемых каналах: с URL → в базу знаний; фото + подпись → резюме владельцу
-- Импорт JSON-экспорта Telegram-чата, YouTube-транскрипты, веб-поиск
+- Импорт JSON-экспорта Telegram-чата, YouTube-транскрипты
+- Веб-поиск (`app/core/web_search.py`): Serper → SerpAPI → Bing → DuckDuckGo (без ключей); FastBot и PlanBot автоматически ищут в интернете, когда вопрос того требует; результаты доступны навыкам `validated_answer` и `knowledge_base`
 
 🛠 **UX:**
 - Индикатор «печатает…» продлевается на всё время обработки
@@ -44,13 +45,13 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 
 🧩 **Внешние навыки:**
 - **Agent Skills (SKILL.md)** — инструкционные навыки открытого стандарта [agentskills.io](https://agentskills.io/specification): папка в `skills/external/` или установка документом `.md` (админ); запуск из `/skills` — исполняет LLM по инструкции
-- **MCP-инструменты** ([Model Context Protocol](https://registry.modelcontextprotocol.io)) — внешние серверы (stdio / Streamable HTTP) через `MCP_SERVERS`; их инструменты доступны VM как `call_tool <server>__<tool>`, Planner видит их список; статус — `/mcp` (admin)
+- **MCP-инструменты** ([Model Context Protocol](https://registry.modelcontextprotocol.io)) — внешние серверы (stdio / Streamable HTTP, SDK 1.x/2.x) через `MCP_SERVERS`; их инструменты доступны VM как `call_tool <server>__<tool>`, Planner видит их список; статус — `/mcp` (admin)
 
 📚 **Витрина службы поддержки (отдельная точка входа):**
 - Демо-бот с собственным токеном (`SHOWCASE_BOT_TOKEN`) отвечает клиентам **строго по загруженному корпусу** базы знаний и ничего не выдумывает.
 - Администратор загружает документы (`.md`, `.txt`) боту — они режутся на чанки и индексируются в отдельной коллекции ChromaDB.
 - Ответ строится только из релевантных чанков с перечнем источников; при отсутствии данных — честный отказ.
-- Команды: `/start`, `/help`, `/corpus_stats` (статус корпуса, админ).
+- Команды: `/start`, `/help`, `/corpus_stats` (статус корпуса), `/corpus_upload` — загрузка документов в корпус (админ).
 
 ---
 
@@ -114,18 +115,22 @@ Alex-Nano-Bot/
 │   ├── agents/               # FastBot, PlanBot, SkillBot, router
 │   ├── core/                 # config, database, llm_client_v2, memory, scheduler,
 │   │   │                     # skills_loader (+SKILL.md), access (гейт+лимиты),
-│   │   │                     # usage (учёт токенов), mcp (внешние инструменты)
+│   │   │                     # usage (учёт токенов), mcp (внешние инструменты),
+│   │   │                     # net_guard (SSRF), web_search, crypto (Fernet)
 │   ├── runtime/              # VM, Planner, StateContext, instructions/
 │   │   └── instructions/     # call_llm, call_tool, respond, store_memory
 │   ├── handlers/             # commands, messages, providers, skills, memory,
-│   │                         # channel, reminders, fallback
+│   │                         # channel, reminders, showcase, fallback
 │   ├── utils/                # keyboards, states, helpers (sanitize_html, typing)
-│   └── bot.py
-│   └── bot_showcase.py           # демо-бот витрины службы поддержки (отдельная точка входа)
+│   ├── bot.py
+│   └── bot_showcase.py       # демо-бот витрины службы поддержки (отдельная точка входа)
 ├── skills/system/ custom/ external/   # external: .py-навыки и папки с SKILL.md
 ├── data/                     # bot.db, vector_store/ (volume-mounted)
 ├── logs/                     # (volume-mounted)
-├── tests/                    # 156 тестов: runtime, helpers, access, usage, mcp, corpus, bot
+├── tests/                    # 290 тестов: runtime, access, usage, mcp, net_guard (SSRF),
+│                             # kb_isolation, tool_policy, skills_admin, skillmd, corpus, bot
+├── requirements.txt          # runtime-зависимости (aiogram 3.31+, chromadb 1.5+, mcp 1.x/2.x)
+├── requirements-dev.txt      # pytest, pytest-asyncio, ruff, mypy (для CI и разработки)
 ├── ruff.toml                 # зафиксированный набор правил линтера
 ├── docker-compose.yml
 ├── Dockerfile
@@ -136,7 +141,7 @@ Alex-Nano-Bot/
 
 ## CI/CD
 
-GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) · `pytest tests/ -q` · **156/156 passed 🟢**
+GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runtime + pytest/ruff/mypy) · `ruff check app/ tests/` · `pytest tests/ -v` · **290/290 passed 🟢**
 
 ---
 
@@ -153,11 +158,17 @@ GitHub Actions · Python 3.10/3.12 · `ruff check` (конфиг в репо) ·
 | `BOT_OPEN_ACCESS` | — | `false` | `true` — открытый режим: бот отвечает всем |
 | `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
 | `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
+| `KB_STALE_DAYS` | — | `30` | Статьи базы знаний старше N дней считаются устаревшими и обновляются при обращении |
 | `MCP_SERVERS` | — | — | JSON-список MCP-серверов одной строкой: `[{"name":"fetch","command":"uvx","args":["mcp-server-fetch"]}]` или `[{"name":"x","url":"https://host/mcp"}]` (stdio требует `uv`, уже в образе) |
 | `RUNTIME_USER_TOOLS` | — | `validated_answer` | Инструменты `call_tool` в Runtime VM, доступные не-админам (через запятую; MCP — `server__tool`). Админам доступны все; `user_id` в навык всегда подставляется из контекста, а не из ответа planner |
 | `ALLOW_PRIVATE_URLS` | — | `false` | `true` — разрешить `knowledge_base`/`site_monitor` ходить на внутренние адреса (localhost, 10.x, 192.168.x, 169.254.x). По умолчанию запрещено (SSRF-защита) |
+| `ENABLE_WEB_SEARCH` | — | `true` | Веб-поиск в FastBot/PlanBot и навыках |
+| `SERPER_API_KEY` / `SERPAPI_KEY` / `BING_API_KEY` | — | — | Ключи поисковых API (рекомендуется Serper); без ключей — бесплатный DuckDuckGo |
+| `WEB_SEARCH_RESULTS` | — | `3` | Результатов поиска на запрос |
+| `EMBEDDING_MODEL` | — | `sentence-transformers/all-MiniLM-L6-v2` | Модель эмбеддингов (fastembed) |
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель демо-бота витрины |
+| `SHOWCASE_SYSTEM_PROMPT` | — | вшитый | Системный промпт демо-бота витрины |
 | `CORPUS_CHUNK_SIZE` | — | `1200` | Размер чанка корпуса (символы) |
 | `CORPUS_CHUNK_OVERLAP` | — | `200` | Перекрытие чанков корпуса (символы) |
 | `CORPUS_TOP_K` | — | `5` | Чанков в контексте ответа |
@@ -200,6 +211,10 @@ docker compose --profile showcase up -d showcase
 - API-ключи Fernet-зашифрованы в БД; сообщение с ключом удаляется из чата
 - PII не в логах — только `user_id`
 - Суточные лимиты (сообщения / LLM-запросы / токены) защищают бюджет ключей
+- SSRF-защита (`app/core/net_guard.py`): сетевые навыки не ходят на приватные адреса (localhost, RFC1918, 169.254.169.254); отключается `ALLOW_PRIVATE_URLS=true`
+- Политика инструментов Runtime VM: не-админам доступен только allowlist `RUNTIME_USER_TOOLS`; `user_id` подставляется навыку из контекста VM, а не из ответа planner
+- Админ-гейт на создание, редактирование и удаление Python-навыков (`/skills`) и установку SKILL.md
+- Изоляция базы знаний per-user: статьи и выборки по ID привязаны к владельцу; заголовки и саммари из интернета HTML-экранируются перед отправкой в Telegram
 
 ---
 

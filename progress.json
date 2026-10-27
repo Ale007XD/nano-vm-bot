@@ -1,7 +1,7 @@
 {
   "project": "Alex-Nano-Bot",
-  "version": "1.5.0",
-  "last_updated": "2026-04-25T03:10:00+07:00",
+  "version": "1.8.0",
+  "last_updated": "2026-10-27T06:36:00+07:00",
   "release_readiness_percent": 88,
   "completed_features": [
     {"id": 1, "name": "Русский интерфейс + Groq API", "status": "completed", "date": "2026-02-07"},
@@ -52,16 +52,103 @@
       "date": "2026-04-25",
       "description": "Увеличен лимит memories с 4 до 8. Добавлена дата создания в инжектируемый контекст для разрешения конфликтов.",
       "file": "app/handlers/messages.py"
+    },
+    {
+      "id": 29,
+      "name": "Мультиюзерность: открытый доступ, бан-лист, суточные лимиты",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "app/core/access.py: user_allowed (BOT_OPEN_ACCESS), бан (/ban /unban /users), check_daily_limit; админы bypass; колонка users.is_banned с автомиграцией.",
+      "file": "app/core/access.py"
+    },
+    {
+      "id": 30,
+      "name": "Per-user учёт LLM-токенов",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "app/core/usage.py: ContextVar-сессии, таблица usage_daily, команда /usage (админ видит тотал).",
+      "file": "app/core/usage.py"
+    },
+    {
+      "id": 31,
+      "name": "Динамические лимиты: /limits, /setlimit",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "Таблица bot_settings; лимиты messages/requests/tokens задаются админом из Telegram, перекрывают env без рестарта.",
+      "file": "app/core/access.py"
+    },
+    {
+      "id": 32,
+      "name": "Промпты из env + JSON-mode planner + reasoning_effort",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "*_SYSTEM_PROMPT читаются из settings (одной строкой, \\n); response_format json_object и reasoning_effort для gpt-oss на Groq."
+    },
+    {
+      "id": 33,
+      "name": "UX: typing-индикатор, дата/время в промпт, Markdown→HTML, PlanBot-стадии",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "start_typing/stop_typing, current_datetime_prompt() по BOT_TIMEZONE, sanitize_html с конвертацией Markdown, статусные сообщения этапов PlanBot."
+    },
+    {
+      "id": 34,
+      "name": "Фото-флоу и каналы: подпись+URL→KB, vision, фото-посты",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "Подпись с URL → статья в базу знаний, без URL → резюме, без подписи → vision (qwen/qwen3.8-27b); фото-посты в отслеживаемых каналах → резюме владельцу."
+    },
+    {
+      "id": 35,
+      "name": "Groq-модели gpt-oss после Enterprise-only ротации llama-3.x",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "Дефолты openai/gpt-oss-20b/120b, vision qwen/qwen3.8-27b; тело API-ошибок логируется; /models переживают рестарт (ProviderConfig в БД, P-7 закрыт)."
+    },
+    {
+      "id": 36,
+      "name": "Agent Skills (SKILL.md) — этап 1 внешних навыков",
+      "status": "completed",
+      "date": "2026-10-26",
+      "description": "kind=skillmd в SkillLoader, папки в skills/external/, установка документом .md (admin), FSM-запуск из /skills.",
+      "file": "app/core/skills_loader.py"
+    },
+    {
+      "id": 37,
+      "name": "Витрина службы поддержки (отдельная точка входа)",
+      "status": "completed",
+      "date": "2026-10-27",
+      "description": "app/bot_showcase.py + app/handlers/showcase.py: демо-бот по SHOWCASE_BOT_TOKEN отвечает строго по корпусу (отдельная коллекция ChromaDB, источники, честный отказ); /corpus_stats, /corpus_upload; docker compose --profile showcase.",
+      "file": "app/bot_showcase.py"
+    },
+    {
+      "id": 38,
+      "name": "MCP-клиент: внешние инструменты (SDK 1.x/2.x)",
+      "status": "completed",
+      "date": "2026-10-27",
+      "description": "app/core/mcp.py: stdio и Streamable HTTP, MCP_SERVERS, call_tool <server>__<tool>, Planner видит список, /mcp (admin). P-mcp закрыт.",
+      "file": "app/core/mcp.py"
+    },
+    {
+      "id": 39,
+      "name": "Безопасность: SSRF, tool policy, админ-гейт, изоляция KB",
+      "status": "completed",
+      "date": "2026-10-27",
+      "description": "app/core/net_guard.py (блок приватных адресов, ALLOW_PRIVATE_URLS); allowlist RUNTIME_USER_TOOLS для не-админов, user_id из контекста VM; админ-гейт на создание/правку/удаление .py-навыков и SKILL.md; KB per-user (UNIQUE(user_id,url), HTML-экранирование).",
+      "file": "app/core/net_guard.py"
+    },
+    {
+      "id": 40,
+      "name": "Модернизация зависимостей + CI на requirements-dev.txt",
+      "status": "completed",
+      "date": "2026-10-27",
+      "description": "aiogram >=3.31, pydantic >=2.13, chromadb >=1.5, fastembed >=0.9, sqlalchemy[asyncio] >=2.1, mcp >=1.2,<3; dev-инструменты в requirements-dev.txt; CI py3.12. Фикс конфликта пинов aiogram×mcp."
     }
   ],
   "pending": [
-    {"id": "P-mcp", "name": "MCPClientExecutorDirect: реальная реализация", "priority": "medium"},
-    {"id": "P-2", "name": "test_bot.py — mock BOT_TOKEN", "priority": "medium"},
-    {"id": "P-3", "name": "handle_photo — aiohttp → httpx", "priority": "medium"},
-    {"id": "P-yt", "name": "messages.py: yt_skill.run() → yt_skill() — AttributeError", "priority": "medium"},
-    {"id": "P-voice", "name": "handle_voice игнорирует agent_mode == runtime", "priority": "medium"},
-    {"id": "P-7", "name": "Персистентность set_model через ProviderConfig", "priority": "low"},
-    {"id": "P-4", "name": "VISION_MODEL в settings", "priority": "low"},
+    {"id": "P-byok", "name": "BYOK: свой ключ LLM-провайдера у пользователя (без лимитов, без фоллбэка на ключи бота)", "priority": "high"},
+    {"id": "P-escalation", "name": "Витрина: эскалация на живого оператора (группа поддержки, топик на клиента)", "priority": "high"},
+    {"id": "P-billing", "name": "Биллинг: пакеты запросов (кредиты); Telegram Stars первым адаптером, ЮKassa/Stripe — заглушки за общим интерфейсом", "priority": "high"},
     {"id": "P-5", "name": "asyncio.gather для параллельных skills", "priority": "low"},
     {"id": "P-dsl-4", "name": "DSL v0.4: $step.output.field, $memories[0]", "priority": "low"},
     {"id": "P-dsl-5", "name": "DSL v0.5: typed conditions (AST)", "priority": "low"},
@@ -70,30 +157,46 @@
     {"id": "P-decouple", "name": "Миграция app/runtime/ в библиотеку MFDBA", "priority": "low"},
     {"id": "P-volume", "name": "./app:/app/app volume mount", "priority": "low"},
     {"id": "P-planner-v2", "name": "Planner v2: retrieve_memory перед генерацией", "priority": "low"},
-    {"id": "P-pytest-marks", "name": "Зарегистрировать integration mark", "priority": "low"},
-    {"id": "P-deploy-name", "name": "docker-compose: сервис bot, не alex-nano-bot", "priority": "low"}
+    {"id": "P-bugs-low", "name": "BUG-20…25 — LOW-блок из реестра аудита Фазы 1", "priority": "low"}
   ],
   "known_defects": [],
   "configuration": {
     "llm": {
       "providers": ["groq (p1)", "openrouter (p2)", "anthropic (p3)", "openai (p4)"],
-      "planner_model": "llama-3.3-70b-versatile",
-      "executor_model": "llama-3.1-8b-instant"
+      "planner_model": "openai/gpt-oss-120b",
+      "executor_model": "openai/gpt-oss-20b",
+      "vision_model": "qwen/qwen3.8-27b",
+      "whisper_model": "whisper-large-v3"
     },
     "runtime": {
       "dsl_version": "v0.1",
-      "planner_status": "stable (patch 6)",
+      "planner_status": "stable (JSON-mode + reasoning_effort)",
       "rag_memories": 8,
       "store_memory": "working, ChromaDB persisted",
-      "state_persistence": "UserState.context JSON ↔ StateContext"
+      "state_persistence": "UserState.context JSON ↔ StateContext",
+      "tool_policy": "RUNTIME_USER_TOOLS allowlist для не-админов, user_id из контекста VM",
+      "mcp": "SDK 1.x/2.x, stdio / Streamable HTTP, MCP_SERVERS, /mcp (admin)"
     },
     "skills": {
-      "loaded": ["calculator", "echo", "reminder", "import_chat", "knowledge_base", "validated_answer", "youtube_transcript"],
-      "total": 7
+      "loaded": ["calculator", "echo", "reminder", "import_chat", "knowledge_base", "site_monitor", "validated_answer", "youtube_transcript"],
+      "total": 8,
+      "external": "SKILL.md-папки в skills/external/, установка .md админом"
+    },
+    "security": {
+      "ssrf": "net_guard: блок localhost/RFC1918/169.254.169.254, ALLOW_PRIVATE_URLS",
+      "skills_gate": "админ-гейт на .py-навыки и SKILL.md",
+      "kb_isolation": "статьи per-user, UNIQUE(user_id,url), HTML-экранирование",
+      "multiuser": "BOT_OPEN_ACCESS, бан-лист, лимиты messages/requests/tokens, usage_daily"
     },
     "tests": {
-      "total": "79/79 passed",
-      "ci": "green"
+      "total": "290",
+      "note": "полный набор в CI/полной установке; в WSL без aiogram — 274 passed + 16 setup-errors",
+      "ruff": "clean"
+    },
+    "showcase": {
+      "entrypoint": "python -m app.bot_showcase (docker compose --profile showcase)",
+      "commands": ["/start", "/help", "/corpus_stats", "/corpus_upload"],
+      "corpus": "отдельная коллекция ChromaDB, чанки 1200/200, top_k=5"
     },
     "deploy": {
       "correct_command": "docker compose build bot && docker compose up -d bot",
