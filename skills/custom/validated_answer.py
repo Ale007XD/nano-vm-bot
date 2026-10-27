@@ -89,14 +89,12 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
 
 def _embed_texts(texts: List[str]) -> List[List[float]]:
     """
-    Получаем embeddings через fastembed (синхронно — он не async).
-    Используем ту же модель что и VectorMemory.
+    Embeddings общей моделью VectorMemory (синхронно). Раньше здесь на КАЖДЫЙ вызов
+    создавалась вторая копия модели (~0.5 ГБ) — теперь модель одна на процесс.
     """
-    from fastembed import TextEmbedding
-    model = TextEmbedding(
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    )
-    return [list(vec) for vec in model.embed(texts)]
+    from app.core.memory import vector_memory
+
+    return vector_memory.embed_texts_sync(texts)
 
 
 def _cluster_fragments(

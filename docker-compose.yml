@@ -6,6 +6,8 @@ services:
       dockerfile: Dockerfile
     container_name: alex-nano-bot
     restart: unless-stopped
+    # Потолок памяти: при нехватке OOM-killer бьёт этот контейнер, а не соседей по серверу
+    mem_limit: ${BOT_MEM_LIMIT:-1280m}
     env_file:
       - .env
     volumes:
@@ -29,6 +31,7 @@ services:
       dockerfile: Dockerfile
     container_name: alex-nano-showcase
     restart: unless-stopped
+    mem_limit: ${SHOWCASE_MEM_LIMIT:-1280m}
     env_file:
       - .env
     volumes:

@@ -3,10 +3,13 @@ Vector Memory System for RAG (Retrieval Augmented Generation)
 Uses ChromaDB for vector storage and fastembed for embeddings (multilingual)
 """
 import asyncio
+import gc
 import hashlib
 import logging
 import os
 import re
+import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +22,22 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+
+def _trim_memory() -> None:
+    """Вернуть освобождённую кучу ОС (glibc): без этого RSS после выгрузки модели не падает."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # не glibc / нет libc.so.6 — не критично
+        pass
+
+
+def _idle_unload_seconds() -> int:
+    """0 — модель грузится при старте и не выгружается (прежнее поведение)."""
+    val = getattr(settings, "EMBEDDING_IDLE_UNLOAD_SECONDS", 0)
+    return val if isinstance(val, int) and not isinstance(val, bool) and val > 0 else 0
 
 
 def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,6 +56,58 @@ class VectorMemory:
         self.chroma_client = None
         self.collections = {}
         self._initialized = False
+        # Эмбеддинг-модель — самый тяжёлый объект (~0.5–0.8 ГБ RSS): грузим лениво
+        # при первом использовании и выгружаем после простоя (EMBEDDING_IDLE_UNLOAD_SECONDS)
+        self._model_lock = threading.Lock()
+        self._model_busy = 0
+        self._model_last_used = 0.0
+        self._unload_task: Optional[asyncio.Task] = None
+
+    # --- ленивая модель ---------------------------------------------------
+    def _acquire_model(self):
+        """Вернуть модель (загрузив при необходимости) и пометить занятой. Парный _release_model."""
+        with self._model_lock:
+            if self.embedding_model is None:
+                logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
+                self.embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
+            self._model_busy += 1
+            self._model_last_used = time.monotonic()
+            return self.embedding_model
+
+    def _release_model(self) -> None:
+        with self._model_lock:
+            self._model_busy -= 1
+            self._model_last_used = time.monotonic()
+
+    def unload_model_if_idle(self, idle_seconds: float, now: Optional[float] = None) -> bool:
+        """Выгрузить модель, если ею не пользуются дольше idle_seconds. True — выгружена."""
+        now = time.monotonic() if now is None else now
+        with self._model_lock:
+            if self.embedding_model is None or self._model_busy > 0:
+                return False
+            if now - self._model_last_used < idle_seconds:
+                return False
+            self.embedding_model = None
+        gc.collect()
+        _trim_memory()
+        logger.info("Embedding model unloaded (idle)")
+        return True
+
+    async def _unload_loop(self, idle_seconds: int, interval: float = 30.0) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                self.unload_model_if_idle(idle_seconds)
+            except Exception as e:  # выгрузка — оптимизация, не должна ронять цикл
+                logger.warning(f"Embedding unload failed: {e}")
+
+    def embed_texts_sync(self, texts: List[str]) -> List[List[float]]:
+        """Пакетные эмбеддинги общей моделью (для навыков; синхронно)."""
+        model = self._acquire_model()
+        try:
+            return [vec.tolist() for vec in model.embed(texts)]
+        finally:
+            self._release_model()
 
     async def initialize(self):
         """Initialize vector memory components"""
@@ -44,12 +115,17 @@ class VectorMemory:
             return
 
         try:
-            logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-            # fastembed и ChromaDB — синхронные: уводим из event loop
-            self.embedding_model = await asyncio.to_thread(
-                TextEmbedding, model_name=EMBEDDING_MODEL
-            )
-            logger.info("Memory initialized with embeddings")
+            idle = _idle_unload_seconds()
+            if idle:
+                logger.info(
+                    f"Embedding model is lazy: loads on first use, unloads after {idle}s idle"
+                )
+                self._unload_task = asyncio.create_task(self._unload_loop(idle))
+            else:
+                # fastembed и ChromaDB — синхронные: уводим из event loop
+                await asyncio.to_thread(self._acquire_model)
+                self._release_model()
+                logger.info("Memory initialized with embeddings")
 
             os.makedirs(settings.VECTOR_STORE_PATH, exist_ok=True)
 
@@ -97,9 +173,11 @@ class VectorMemory:
 
     def _embed_text(self, text: str) -> List[float]:
         """Generate embedding for text using fastembed"""
-        if not self.embedding_model:
-            raise RuntimeError("Embedding model not initialized")
-        embeddings = list(self.embedding_model.embed([text]))
+        model = self._acquire_model()
+        try:
+            embeddings = list(model.embed([text]))
+        finally:
+            self._release_model()
         return embeddings[0].tolist()
 
     async def add_memory(

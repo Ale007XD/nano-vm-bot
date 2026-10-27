@@ -342,6 +342,14 @@ class Settings(BaseSettings):
         default="data/vector_store",
         description="Path to vector store directory"
     )
+    EMBEDDING_IDLE_UNLOAD_SECONDS: int = Field(
+        default=600,
+        ge=0,
+        description=(
+            "Эмбеддинг-модель грузится при первом использовании и выгружается после стольких "
+            "секунд простоя (экономия ~0.5 ГБ ОЗУ). 0 — загрузка при старте, без выгрузки"
+        ),
+    )
     EMBEDDING_MODEL: str = Field(
         default="sentence-transformers/all-MiniLM-L6-v2",
         description="Model for text embeddings"
