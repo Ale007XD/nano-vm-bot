@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.core.logger import setup_logging
 from app.core.memory import vector_memory
+from app.handlers.operator import router as operator_router
 from app.handlers.showcase import router as showcase_router
 
 logger = setup_logging()
@@ -35,6 +36,8 @@ async def on_startup(bot: Bot):
     await bot.set_my_commands([
         BotCommand(command="start", description="Начать"),
         BotCommand(command="help", description="Справка"),
+        BotCommand(command="operator", description="Позвать оператора"),
+        BotCommand(command="endchat", description="Вернуться к боту"),
         BotCommand(command="corpus_stats", description="Статистика корпуса (admin)"),
     ])
 
@@ -53,6 +56,8 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
+    # Оператор — первым: сообщения клиента в активной сессии не должны уходить в LLM
+    dp.include_router(operator_router)
     dp.include_router(showcase_router)
 
     dp.startup.register(on_startup)

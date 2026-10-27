@@ -13,7 +13,9 @@ from app.core.config import settings
 from app.core.llm_client_v2 import Message as LLMMessage
 from app.core.llm_client_v2 import llm_client
 from app.core.memory import vector_memory
+from app.core.operator import remember_question
 from app.core.usage import flush_usage, start_usage_session
+from app.handlers.operator import call_operator_keyboard, operator_enabled
 from app.utils.helpers import (
     current_datetime_prompt,
     deliver_via_message,
@@ -67,7 +69,8 @@ async def cmd_help(message: Message):
         "1. Пришлите вопрос своими словами.\n"
         "2. Я найду релевантные фрагменты в базе знаний и отвечу по ним.\n"
         "3. В конце ответа я приведу источники.\n\n"
-        "Если ответа нет в базе — я скажу об этом честно, не придумывая ничего.\n\n"
+        "Если ответа нет в базе — я скажу об этом честно, не придумывая ничего. "
+        "Нужен живой человек — /operator.\n\n"
         "Примеры вопросов:\n"
         "• «Как восстановить доступ к личному кабинету?»\n"
         "• «Какие документы нужны для подачи заявки?»\n"
@@ -174,6 +177,8 @@ async def handle_message(message: Message):
         await message.answer("Пришлите вопрос текстом.")
         return
 
+    remember_question(message.from_user.id, text)
+    escalate_kb = call_operator_keyboard() if operator_enabled() else None
     processing_msg = await message.answer("🔍 Ищу в базе знаний…")
     typing_task = start_typing(message.bot, message.chat.id)
     start_usage_session(message.from_user.id)
@@ -183,7 +188,8 @@ async def handle_message(message: Message):
         if not docs:
             await processing_msg.edit_text(
                 "Я не нашёл ответа на ваш вопрос в базе знаний. "
-                "Попробуйте переформулировать вопрос или обратитесь в поддержку."
+                "Попробуйте переформулировать вопрос или обратитесь в поддержку.",
+                reply_markup=escalate_kb,
             )
             return
 
@@ -232,7 +238,8 @@ async def handle_message(message: Message):
     except Exception as e:
         logger.error(f"Error in showcase handler: {e}")
         await processing_msg.edit_text(
-            "⚠️ Ошибка при обработке вопроса. Попробуйте позже."
+            "⚠️ Ошибка при обработке вопроса. Попробуйте позже.",
+            reply_markup=escalate_kb,
         )
     finally:
         stop_typing(typing_task)

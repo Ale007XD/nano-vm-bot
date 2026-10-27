@@ -220,6 +220,11 @@ async def init_db():
 
             await conn.run_sync(_ensure_columns)
 
+    # Таблицы расширений (BYOK, оператор, биллинг)
+    from app.core.ext_db import init_ext_tables
+
+    await init_ext_tables(engine)
+
 
 async def is_user_banned(telegram_id: int) -> bool:
     async with async_session_maker() as session:

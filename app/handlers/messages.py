@@ -362,12 +362,22 @@ async def handle_photo(message: Message):
 
     # --- Фото без подписи — vision-анализ ---
     try:
-        if not settings.GROQ_API_KEY:
-            await processing_msg.edit_text(
-                "❌ <b>Анализ изображений недоступен</b>\n\n"
-                "Vision-модель работает через Groq: задайте <code>GROQ_API_KEY</code> в .env "
-                "и перезапустите бота."
-            )
+        from app.core.byok import resolve_provider_key
+
+        groq_key, byok_active = await resolve_provider_key("groq", settings.GROQ_API_KEY)
+        if not groq_key:
+            if byok_active:
+                await processing_msg.edit_text(
+                    "❌ <b>Анализ изображений недоступен</b>\n\n"
+                    "Vision работает через Groq, а у вас нет ключа Groq: "
+                    "<code>/byok set groq &lt;ключ&gt;</code>"
+                )
+            else:
+                await processing_msg.edit_text(
+                    "❌ <b>Анализ изображений недоступен</b>\n\n"
+                    "Vision-модель работает через Groq: задайте <code>GROQ_API_KEY</code> в .env "
+                    "и перезапустите бота."
+                )
             return
 
         photo = message.photo[-1]
@@ -384,7 +394,7 @@ async def handle_photo(message: Message):
         user_prompt = "Подробно опиши что изображено на фото. Отвечай на русском языке."
 
         headers = {
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+            "Authorization": f"Bearer {groq_key}",
             "Content-Type": "application/json"
         }
 

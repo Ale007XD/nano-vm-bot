@@ -27,6 +27,11 @@ def start_usage_session(telegram_id: int) -> None:
     _session_accum.set({})
 
 
+def get_session_user() -> Optional[int]:
+    """telegram_id пользователя текущей сессии учёта (None вне сессии)."""
+    return _session_user.get()
+
+
 def record_usage(usage: Optional[dict]) -> None:
     """Зафиксировать usage одного успешного LLM-запроса (вызывает llm_client)."""
     if _session_user.get() is None:

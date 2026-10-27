@@ -18,6 +18,22 @@ def mock_db():
     return sys.modules["app.core.database"]
 
 
+@pytest.fixture(autouse=True)
+def _no_byok(monkeypatch):
+    """BYOK-проверка в check_daily_limit ходит в БД; здесь БД замокана — отключаем."""
+    from app.core import byok
+
+    monkeypatch.setattr(byok, "has_user_keys", AsyncMock(return_value=False))
+
+
+@pytest.fixture(autouse=True)
+def _no_credits(monkeypatch):
+    """Списание кредитов ходит в БД; здесь БД замокана — кредитов нет."""
+    from app.core.billing import service
+
+    monkeypatch.setattr(service, "consume_credit", AsyncMock(return_value=False))
+
+
 class TestUserAllowed:
     @pytest.mark.asyncio
     async def test_admin_always_allowed(self, monkeypatch, mock_settings):

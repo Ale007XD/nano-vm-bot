@@ -273,6 +273,33 @@ class Settings(BaseSettings):
         ),
     )
 
+    BYOK_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Разрешить пользователям свои API-ключи (/byok). Требует ENCRYPTION_KEY. "
+            "С ключом пользователя запросы идут только на него (без фолбэка), суточные лимиты не применяются"
+        ),
+    )
+
+    OPERATOR_CHAT_ID: int = Field(
+        default=0,
+        description=(
+            "ID супергруппы поддержки (с включёнными темами) для эскалации на оператора в "
+            "витрине. Бот — админ группы с правом управлять темами. 0 — эскалация выключена"
+        ),
+    )
+
+    BILLING_PROVIDERS: str = Field(
+        default="",
+        description="Платёжные провайдеры через запятую: stars, yookassa, stripe. Пусто — биллинг выключен",
+    )
+    YOOKASSA_PROVIDER_TOKEN: str = Field(default="", description="Токен ЮKassa из @BotFather → Payments")
+    STRIPE_PROVIDER_TOKEN: str = Field(default="", description="Токен Stripe из @BotFather → Payments")
+    CREDIT_PACKAGES: str = Field(
+        default="",
+        description="JSON-каталог пакетов кредитов; пусто — каталог по умолчанию (см. billing/packages.py)",
+    )
+
     @field_validator("ADMIN_IDS", mode="before")
     def parse_admin_ids(cls, v):
         if isinstance(v, int):

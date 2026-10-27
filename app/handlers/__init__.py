@@ -4,6 +4,8 @@ Handler registration
 from aiogram import Dispatcher
 
 from app.handlers import (
+    billing,
+    byok,
     channel,
     commands,
     fallback,
@@ -19,6 +21,8 @@ def register_handlers(dp: Dispatcher):
     """Register all handlers"""
     # Include routers — order matters for FSM priority
     dp.include_router(commands.router)
+    dp.include_router(byok.router)        # /byok — свои API-ключи пользователей
+    dp.include_router(billing.router)     # /buy /balance, оплата, successful_payment
     dp.include_router(providers.router)   # Admin: hot-swap LLM providers
     dp.include_router(skills.router)
     dp.include_router(memory.router)

@@ -25,9 +25,42 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 
+from app.core.byok import BYOKError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# Описания провайдеров. Единый источник для общих ключей (.env) и BYOK.
+PROVIDER_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "groq": {
+        "key_attr": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1",
+        "priority": 1,
+        # llama-3.x и gemma2 выведены в Enterprise-only (для обычных
+        # ключей — 404); self-serve замены — gpt-oss
+        "models": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "whisper-large-v3"],
+    },
+    "openrouter": {
+        "key_attr": "OPENROUTER_API_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
+        "priority": 2,
+        # meta-llama *:free удалены из каталога (404)
+        "models": ["xingchen-agi/xing4.0-29b-a4b:free", "recursive/flint-v1.0:free"],
+    },
+    "anthropic": {
+        "key_attr": "ANTHROPIC_API_KEY",
+        "base_url": "https://api.anthropic.com",
+        "priority": 3,
+        "models": ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"],
+    },
+    "openai": {
+        "key_attr": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "priority": 4,
+        "models": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    },
+}
 
 
 class ProviderStatus(Enum):
@@ -84,6 +117,15 @@ class PendingTask:
     callback: Optional[Callable] = None
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    """Ошибка авторизации у провайдера (401/403) — повторять бессмысленно."""
+    resp = getattr(exc, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) in (401, 403):
+        return True
+    text = str(exc)
+    return "401" in text or "403" in text
+
+
 class MultiProviderLLMClient:
     """Multi-provider LLM client with automatic fallback"""
 
@@ -98,65 +140,48 @@ class MultiProviderLLMClient:
 
     def _setup_providers(self):
         """Initialize providers from settings"""
-        # Provider 1: Groq (primary)
-        if hasattr(settings, 'GROQ_API_KEY') and settings.GROQ_API_KEY:
-            self.providers.append(Provider(
-                name="groq",
-                base_url="https://api.groq.com/openai/v1",
-                api_key=settings.GROQ_API_KEY,
-                # llama-3.x и gemma2 выведены в Enterprise-only (для обычных
-                # ключей — 404); self-serve замены — gpt-oss
-                models=[
-                    "openai/gpt-oss-20b",
-                    "openai/gpt-oss-120b",
-                    "whisper-large-v3"
-                ],
-                priority=1
-            ))
-
-        # Provider 2: OpenRouter (fallback)
-        if settings.OPENROUTER_API_KEY:
-            self.providers.append(Provider(
-                name="openrouter",
-                base_url="https://openrouter.ai/api/v1",
-                api_key=settings.OPENROUTER_API_KEY,
-                # meta-llama *:free удалены из каталога (404)
-                models=[
-                    "xingchen-agi/xing4.0-29b-a4b:free",
-                    "recursive/flint-v1.0:free",
-                ],
-                priority=2
-            ))
-
-        # Provider 3: Anthropic (if key available)
-        if hasattr(settings, 'ANTHROPIC_API_KEY') and settings.ANTHROPIC_API_KEY:
-            self.providers.append(Provider(
-                name="anthropic",
-                base_url="https://api.anthropic.com",
-                api_key=settings.ANTHROPIC_API_KEY,
-                models=[
-                    "claude-3-5-sonnet-20241022",
-                    "claude-3-haiku-20240307"
-                ],
-                priority=3
-            ))
-
-        # Provider 4: OpenAI (if key available)
-        if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
-            self.providers.append(Provider(
-                name="openai",
-                base_url="https://api.openai.com/v1",
-                api_key=settings.OPENAI_API_KEY,
-                models=[
-                    "gpt-3.5-turbo",
-                    "gpt-4o-mini"
-                ],
-                priority=4
-            ))
+        for name, tpl in PROVIDER_TEMPLATES.items():
+            key = getattr(settings, tpl["key_attr"], None)
+            if key:
+                self.providers.append(self._provider_from_template(name, key))
 
         # Sort by priority
         self.providers.sort(key=lambda p: p.priority)
         logger.info(f"Initialized {len(self.providers)} providers: {[p.name for p in self.providers]}")
+
+    @staticmethod
+    def _provider_from_template(name: str, api_key: str) -> "Provider":
+        tpl = PROVIDER_TEMPLATES[name]
+        return Provider(
+            name=name,
+            base_url=tpl["base_url"],
+            api_key=api_key,
+            models=list(tpl["models"]),
+            priority=tpl["priority"],
+        )
+
+    def _providers_from_user_keys(self, user_keys: Dict[str, str]) -> List["Provider"]:
+        """Эфемерные провайдеры на ключах пользователя (BYOK), по приоритету.
+
+        Это копии: общее состояние здоровья/счётчиков ошибок общих провайдеров
+        не затрагивается, а ключ пользователя не попадает в self.providers.
+        """
+        out = [
+            self._provider_from_template(name, key)
+            for name, key in user_keys.items()
+            if name in PROVIDER_TEMPLATES
+        ]
+        return sorted(out, key=lambda p: p.priority)
+
+    async def _user_keys(self) -> Dict[str, str]:
+        """BYOK-ключи пользователя текущей сессии учёта ({} если нет)."""
+        try:
+            from app.core.byok import current_user_keys
+
+            return await current_user_keys()
+        except Exception as e:  # noqa: BLE001 — недоступность BYOK не должна ломать общий путь
+            logger.warning("BYOK keys lookup failed: %s", e)
+            return {}
 
     # ------------------------------------------------------------------ #
     #  HOT RELOAD                                                          #
@@ -408,7 +433,14 @@ class MultiProviderLLMClient:
         max_tokens = max_tokens or settings.MAX_TOKENS
 
         last_error = None
-        healthy_providers = self._get_healthy_providers()
+
+        # BYOK: у пользователя есть свои ключи → только они, без фолбэка на общие
+        user_keys = await self._user_keys()
+        byok_mode = bool(user_keys)
+        if byok_mode:
+            healthy_providers = self._providers_from_user_keys(user_keys)
+        else:
+            healthy_providers = self._get_healthy_providers()
 
         if not healthy_providers:
             logger.warning("No healthy providers, attempting recovery...")
@@ -475,6 +507,10 @@ class MultiProviderLLMClient:
                     last_error = e
                     logger.warning(f"{provider.name} attempt {attempt + 1} failed: {e}")
 
+                    # BYOK: отклонённый ключ повторами не лечится
+                    if byok_mode and _is_auth_error(e):
+                        break
+
                     if attempt < max_attempts - 1:
                         await asyncio.sleep(self.retry_delay * (attempt + 1))
                     else:
@@ -482,6 +518,15 @@ class MultiProviderLLMClient:
                         if provider.error_count >= 3:
                             provider.status = ProviderStatus.DEGRADED
                             logger.error(f"Provider {provider.name} degraded after {provider.error_count} errors")
+
+        if byok_mode:
+            # Никаких pending-задач: их повтор ушёл бы на общие ключи бота
+            names = ", ".join(p.name for p in healthy_providers)
+            logger.error("BYOK request failed (%s): %s", names, last_error)
+            raise BYOKError(
+                f"Запрос к вашему ключу ({names}) не удался: {last_error}. "
+                "Проверьте ключ: /byok"
+            )
 
         error_msg = f"All providers failed. Last error: {last_error}"
         logger.error(error_msg)
@@ -835,12 +880,22 @@ class MultiProviderLLMClient:
 
         import aiofiles
 
-        whisper_providers = [p for p in self.providers if 'whisper' in ' '.join(p.models)]
+        user_keys = await self._user_keys()
+        if user_keys:
+            # BYOK: голос только на ключе Groq пользователя, без общего ключа бота
+            groq_key = user_keys.get("groq")
+            if not groq_key:
+                raise BYOKError(
+                    "Для распознавания голоса нужен ваш ключ Groq: /byok set groq <ключ>"
+                )
+            provider = self._provider_from_template("groq", groq_key)
+        else:
+            whisper_providers = [p for p in self.providers if 'whisper' in ' '.join(p.models)]
 
-        if not whisper_providers:
-            raise Exception("No provider with Whisper support available")
+            if not whisper_providers:
+                raise Exception("No provider with Whisper support available")
 
-        provider = whisper_providers[0]
+            provider = whisper_providers[0]
         model = model or settings.WHISPER_MODEL or "whisper-large-v3"
 
         async with aiofiles.open(audio_file_path, 'rb') as f:

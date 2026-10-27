@@ -94,6 +94,24 @@ async def get_effective_limits() -> dict:
     return limits
 
 
+async def _deny_or_spend_credit(telegram_id: int, denial: str) -> LimitCheck:
+    """Бесплатный лимит исчерпан: списать 1 кредит (если есть) либо отказать.
+
+    Сбой БД биллинга не блокирует и не списывает — как и сбой самой проверки лимитов.
+    """
+    try:
+        from app.core.billing.providers import billing_enabled
+        from app.core.billing.service import consume_credit
+
+        if await consume_credit(telegram_id):
+            return LimitCheck(True)
+        if billing_enabled():
+            denial += "\n\n💳 Докупить запросы: /buy"
+    except Exception as e:
+        logger.warning(f"Credit check failed for {telegram_id}: {e}")
+    return LimitCheck(False, denial)
+
+
 async def check_daily_limit(telegram_id: int) -> LimitCheck:
     """Суточные лимиты (UTC): сообщения + LLM-запросы + токены.
 
@@ -102,6 +120,15 @@ async def check_daily_limit(telegram_id: int) -> LimitCheck:
     """
     if is_admin(telegram_id):
         return LimitCheck(True)
+
+    # BYOK: пользователь платит за себя своими ключами — лимиты бота не применяются
+    try:
+        from app.core.byok import has_user_keys
+
+        if await has_user_keys(telegram_id):
+            return LimitCheck(True)
+    except Exception as e:
+        logger.warning(f"BYOK check failed for {telegram_id}: {e}")
 
     limits = await get_effective_limits()
     if not any(v for v in limits.values()):
@@ -113,8 +140,8 @@ async def check_daily_limit(telegram_id: int) -> LimitCheck:
         if limits["messages"] > 0:
             used = await count_today_messages(telegram_id)
             if used >= limits["messages"]:
-                return LimitCheck(
-                    False,
+                return await _deny_or_spend_credit(
+                    telegram_id,
                     "⏳ <b>Дневной лимит исчерпан</b> "
                     f"(сообщения: {used}/{limits['messages']}).\n\n"
                     "Лимит обновится в 00:00 UTC.",
@@ -124,15 +151,15 @@ async def check_daily_limit(telegram_id: int) -> LimitCheck:
             usage = await get_today_usage(telegram_id)
             if usage is not None:
                 if limits["requests"] > 0 and usage.requests >= limits["requests"]:
-                    return LimitCheck(
-                        False,
+                    return await _deny_or_spend_credit(
+                        telegram_id,
                         "⏳ <b>Дневной лимит исчерпан</b> "
                         f"(LLM-запросы: {usage.requests}/{limits['requests']}).\n\n"
                         "Лимит обновится в 00:00 UTC.",
                     )
                 if limits["tokens"] > 0 and usage.total_tokens >= limits["tokens"]:
-                    return LimitCheck(
-                        False,
+                    return await _deny_or_spend_credit(
+                        telegram_id,
                         "⏳ <b>Дневной лимит исчерпан</b> "
                         f"(токены: {usage.total_tokens}/{limits['tokens']}).\n\n"
                         "Лимит обновится в 00:00 UTC.",
