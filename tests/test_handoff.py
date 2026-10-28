@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core import ext_db, handoff, support_events
 from app.core import operator as store
+from app.core.access import LimitCheck
 from app.core.dialog import DialogHistory, Turn, history
 from app.core.ext_db import ExtBase
 
@@ -361,6 +362,8 @@ def showcase_env(monkeypatch):
     monkeypatch.setattr(sc, "flush_usage", AsyncMock())
     monkeypatch.setattr(sc, "deliver_via_message", AsyncMock())
     monkeypatch.setattr(sc, "operator_enabled", lambda: True)
+    monkeypatch.setattr(sc, "_ensure_user", AsyncMock())
+    monkeypatch.setattr(sc, "check_showcase_limit", AsyncMock(return_value=LimitCheck(True)))
 
 
 class TestShowcaseRecording:
@@ -398,6 +401,29 @@ class TestShowcaseRecording:
         await sc.handle_message(showcase_msg("вопрос A", 1)[0])
         await sc.handle_message(showcase_msg("вопрос B", 2)[0])
         assert history.last_client_text(1) == "вопрос A" and history.last_client_text(2) == "вопрос B"
+
+
+class TestShowcaseLimitInHandler:
+    @pytest.mark.asyncio
+    async def test_limit_blocks_before_search_and_offers_operator(self, showcase_env, monkeypatch):
+        monkeypatch.setattr(
+            sc, "check_showcase_limit", AsyncMock(return_value=LimitCheck(False, "лимит"))
+        )
+        search = AsyncMock(return_value=[])
+        monkeypatch.setattr(sc.vector_memory, "search_corpus", search)
+        m, _ = showcase_msg()
+        await sc.handle_message(m)
+        search.assert_not_awaited()
+        assert m.answer.await_args.args[0] == "лимит"
+        assert m.answer.await_args.kwargs["reply_markup"] is not None
+        assert history.recent(CLIENT) == []
+
+    @pytest.mark.asyncio
+    async def test_user_registered_before_limit_check(self, showcase_env, monkeypatch):
+        monkeypatch.setattr(sc.vector_memory, "search_corpus", AsyncMock(return_value=[]))
+        m, _ = showcase_msg()
+        await sc.handle_message(m)
+        sc._ensure_user.assert_awaited_once_with(CLIENT)
 
 
 class TestDeliverKeyboard:

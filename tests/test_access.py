@@ -285,3 +285,62 @@ class TestShowcaseAccess:
         monkeypatch.setattr(mock_settings, "ADMIN_IDS", [1])
         assert await user_allowed(1, False) is True
         assert await user_allowed(999, False) is False
+
+
+class TestShowcaseLimit:
+    @pytest.fixture
+    def usage(self, monkeypatch, mock_settings, mock_db):
+        monkeypatch.setattr(mock_settings, "ADMIN_IDS", [1])
+        monkeypatch.setattr(mock_settings, "SHOWCASE_DAILY_LIMIT", 3)
+
+        def set_used(n):
+            row = None if n is None else type("U", (), {"requests": n})()
+            monkeypatch.setattr(mock_db, "get_today_usage", AsyncMock(return_value=row))
+
+        return set_used
+
+    @pytest.mark.asyncio
+    async def test_below_limit_allowed(self, usage):
+        from app.core.access import check_showcase_limit
+
+        usage(2)
+        assert (await check_showcase_limit(999)).allowed is True
+
+    @pytest.mark.asyncio
+    async def test_no_usage_row_allowed(self, usage):
+        from app.core.access import check_showcase_limit
+
+        usage(None)
+        assert (await check_showcase_limit(999)).allowed is True
+
+    @pytest.mark.asyncio
+    async def test_at_limit_denied_with_text(self, usage):
+        from app.core.access import check_showcase_limit
+
+        usage(3)
+        check = await check_showcase_limit(999)
+        assert check.allowed is False
+        assert "3/3" in check.message and "/operator" in check.message
+
+    @pytest.mark.asyncio
+    async def test_admin_unlimited(self, usage):
+        from app.core.access import check_showcase_limit
+
+        usage(100)
+        assert (await check_showcase_limit(1)).allowed is True
+
+    @pytest.mark.asyncio
+    async def test_zero_means_unlimited(self, usage, monkeypatch, mock_settings):
+        from app.core.access import check_showcase_limit
+
+        usage(100)
+        monkeypatch.setattr(mock_settings, "SHOWCASE_DAILY_LIMIT", 0)
+        assert (await check_showcase_limit(999)).allowed is True
+
+    @pytest.mark.asyncio
+    async def test_db_error_does_not_block(self, usage, monkeypatch, mock_db):
+        from app.core.access import check_showcase_limit
+
+        usage(0)
+        monkeypatch.setattr(mock_db, "get_today_usage", AsyncMock(side_effect=RuntimeError("db")))
+        assert (await check_showcase_limit(999)).allowed is True

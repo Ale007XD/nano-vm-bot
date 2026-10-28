@@ -10,6 +10,8 @@
 - SHOWCASE_OPEN_ACCESS: то же для витрины; не задан — наследует BOT_OPEN_ACCESS.
 
 Лимиты:
+- SHOWCASE_DAILY_LIMIT (0 = безлимит): суточное число LLM-ответов витрины
+  на пользователя (по usage_daily); админы не ограничены.
 - USER_DAILY_MESSAGE_LIMIT (0 = безлимит): суточное число сообщений
   на пользователя по UTC-суткам; админы не ограничены.
 """
@@ -182,4 +184,32 @@ async def check_daily_limit(telegram_id: int) -> LimitCheck:
     except Exception as e:
         logger.warning(f"Daily limit check failed for {telegram_id}: {e}")
 
+    return LimitCheck(True)
+
+
+async def check_showcase_limit(telegram_id: int) -> LimitCheck:
+    """Суточный лимит LLM-ответов витрины (UTC). Админ — безлимит.
+
+    Считаются только запросы, дошедшие до LLM (usage_daily.requests): вопросы
+    без ответа в базе знаний лимит не тратят. Сбой БД не блокирует пользователей.
+    """
+    if is_admin(telegram_id):
+        return LimitCheck(True)
+    limit = getattr(settings, "SHOWCASE_DAILY_LIMIT", 0)
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return LimitCheck(True)
+    try:
+        from app.core.database import get_today_usage
+
+        usage = await get_today_usage(telegram_id)
+        used = int(usage.requests) if usage is not None else 0
+        if used >= limit:
+            return LimitCheck(
+                False,
+                "⏳ <b>Дневной лимит вопросов исчерпан</b> "
+                f"({used}/{limit}).\n\nЛимит обновится в 00:00 UTC. "
+                "Если вопрос срочный — позовите оператора: /operator.",
+            )
+    except Exception as e:
+        logger.warning(f"Showcase limit check failed for {telegram_id}: {e}")
     return LimitCheck(True)

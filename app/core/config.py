@@ -255,6 +255,10 @@ class Settings(BaseSettings):
         default=None,
         description="Витрина открыта для всех. Не задано — как BOT_OPEN_ACCESS"
     )
+    SHOWCASE_DAILY_LIMIT: int = Field(
+        default=20, ge=0,
+        description="Суточный лимит LLM-ответов витрины на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
+    )
     USER_DAILY_MESSAGE_LIMIT: int = Field(
         default=50,
         description="Суточный лимит сообщений на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"

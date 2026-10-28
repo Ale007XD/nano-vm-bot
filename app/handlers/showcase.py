@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import Document, Message
 
-from app.core.access import showcase_open, user_allowed
+from app.core.access import check_showcase_limit, showcase_open, user_allowed
 from app.core.config import settings
 from app.core.dialog import (
     KIND_ANSWER,
@@ -173,6 +173,17 @@ async def handle_document(message: Message):
             os.remove(temp_path)
 
 
+async def _ensure_user(telegram_id: int) -> None:
+    """Строка users нужна для учёта расхода (usage_daily); хранится только id."""
+    try:
+        from app.core.database import async_session_maker, get_or_create_user
+
+        async with async_session_maker() as session:
+            await get_or_create_user(session, telegram_id=telegram_id)
+    except Exception as e:
+        logger.warning(f"Showcase: cannot register user {telegram_id}: {e}")
+
+
 @router.message()
 async def handle_message(message: Message):
     """Main entry: answer strictly from corpus."""
@@ -183,6 +194,15 @@ async def handle_message(message: Message):
     text = (message.text or "").strip()
     if not text:
         await message.answer("Пришлите вопрос текстом.")
+        return
+
+    await _ensure_user(message.from_user.id)
+    limit_check = await check_showcase_limit(message.from_user.id)
+    if not limit_check.allowed:
+        await message.answer(
+            limit_check.message,
+            reply_markup=call_operator_keyboard() if operator_enabled() else None,
+        )
         return
 
     dialog_history.add(message.from_user.id, ROLE_CLIENT, text, KIND_QUESTION)
