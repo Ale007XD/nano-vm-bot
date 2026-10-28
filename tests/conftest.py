@@ -6,6 +6,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
+class SafeMock(MagicMock):
+    """MagicMock, переживающий откат monkeypatch.
+
+    pytest>=9.2 запоминает старое значение атрибута только из __dict__ объекта;
+    атрибуты MagicMock живут в _mock_children, поэтому при откате pytest делает
+    delattr, а мок помечает атрибут удалённым -> AttributeError в следующих
+    тестах. Здесь delattr только снимает установленное значение, не помечая атрибут удалённым.
+    """
+
+    def __delattr__(self, name):
+        # убрать установленное значение, но не помечать атрибут «удалённым»
+        self.__dict__.pop(name, None)
+
+
 # 1. Заглушки тяжелых внешних зависимостей (ChromaDB, FastEmbed)
 mock_chroma = MagicMock()
 mock_chroma_config = MagicMock()
@@ -22,24 +37,24 @@ os.environ["BOT_TOKEN"] = "123:mock"
 os.environ["OPENROUTER_API_KEY"] = "mock_key"
 
 # 3. Точечные заглушки внутренних модулей, вызывающих побочные эффекты при загрузке
-mock_settings = MagicMock()
+mock_settings = SafeMock()
 mock_settings.APP_NAME = "Alex-Nano-Bot"
 mock_settings.DEFAULT_MODEL = "llama-3.1-8b-instant"
 mock_settings.CODER_MODEL = "llama-3.1-8b-instant"
 mock_settings.PLANNER_MODEL = "llama-3.3-70b-versatile"
 
-mock_config = MagicMock()
+mock_config = SafeMock()
 mock_config.Settings.return_value = mock_settings
 mock_config.settings = mock_settings
 sys.modules["app.core.config"] = mock_config
 
-mock_db = MagicMock()
+mock_db = SafeMock()
 mock_db.engine = AsyncMock()
 mock_db.init_db = AsyncMock()
 mock_db.declarative_base.return_value = MagicMock()
 sys.modules["app.core.database"] = mock_db
 
-mock_client = MagicMock()
+mock_client = SafeMock()
 
 @dataclass
 class Message:
