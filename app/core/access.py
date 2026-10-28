@@ -7,6 +7,7 @@
 Режимы:
 - BOT_OPEN_ACCESS=false (дефолт): бот приватный, доступ только ADMIN_IDS.
 - BOT_OPEN_ACCESS=true: бот отвечает всем, кроме забаненных (/ban, /unban).
+- SHOWCASE_OPEN_ACCESS: то же для витрины; не задан — наследует BOT_OPEN_ACCESS.
 
 Лимиты:
 - USER_DAILY_MESSAGE_LIMIT (0 = безлимит): суточное число сообщений
@@ -25,11 +26,25 @@ def is_admin(telegram_id: int) -> bool:
     return isinstance(ids, (list, tuple, set)) and telegram_id in ids
 
 
-async def user_allowed(telegram_id: int) -> bool:
-    """Пропускать ли сообщение пользователя."""
+def showcase_open() -> bool:
+    """Открыта ли витрина для всех: свой флаг, иначе как основной бот."""
+    own = getattr(settings, "SHOWCASE_OPEN_ACCESS", None)
+    if isinstance(own, bool):
+        return own
+    return bool(getattr(settings, "BOT_OPEN_ACCESS", False))
+
+
+async def user_allowed(telegram_id: int, open_access: Optional[bool] = None) -> bool:
+    """Пропускать ли сообщение пользователя.
+
+    open_access — переопределение режима (витрина передаёт showcase_open());
+    None — берётся BOT_OPEN_ACCESS.
+    """
     if is_admin(telegram_id):
         return True
-    if not bool(getattr(settings, "BOT_OPEN_ACCESS", False)):
+    if open_access is None:
+        open_access = bool(getattr(settings, "BOT_OPEN_ACCESS", False))
+    if not open_access:
         return False
     try:
         from app.core.database import is_user_banned

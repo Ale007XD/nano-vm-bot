@@ -1,7 +1,7 @@
 """
 Alex-Nano-Bot Configuration Module
 """
-from typing import List
+from typing import List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
@@ -251,6 +251,10 @@ class Settings(BaseSettings):
         default=False,
         description="Открытый режим: бот отвечает любому пользователю (кроме забаненных через /ban)"
     )
+    SHOWCASE_OPEN_ACCESS: Optional[bool] = Field(
+        default=None,
+        description="Витрина открыта для всех. Не задано — как BOT_OPEN_ACCESS"
+    )
     USER_DAILY_MESSAGE_LIMIT: int = Field(
         default=50,
         description="Суточный лимит сообщений на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
@@ -299,6 +303,13 @@ class Settings(BaseSettings):
         default="",
         description="JSON-каталог пакетов кредитов; пусто — каталог по умолчанию (см. billing/packages.py)",
     )
+
+    @field_validator("SHOWCASE_OPEN_ACCESS", mode="before")
+    @classmethod
+    def _empty_showcase_flag_is_unset(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     @field_validator("ADMIN_IDS", mode="before")
     def parse_admin_ids(cls, v):

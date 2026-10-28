@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import Document, Message
 
-from app.core.access import user_allowed
+from app.core.access import showcase_open, user_allowed
 from app.core.config import settings
 from app.core.dialog import (
     KIND_ANSWER,
@@ -49,7 +49,7 @@ def _source_line(meta: dict) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    if not await user_allowed(message.from_user.id):
+    if not await user_allowed(message.from_user.id, showcase_open()):
         await message.answer(
             "⛔ Доступ запрещен.\n\n"
             "Этот бот — витрина службы поддержки. Обратитесь к администратору, "
@@ -68,7 +68,7 @@ async def cmd_start(message: Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    if not await user_allowed(message.from_user.id):
+    if not await user_allowed(message.from_user.id, showcase_open()):
         await message.answer("⛔ Доступ запрещен.")
         return
 
@@ -176,7 +176,7 @@ async def handle_document(message: Message):
 @router.message()
 async def handle_message(message: Message):
     """Main entry: answer strictly from corpus."""
-    if not await user_allowed(message.from_user.id):
+    if not await user_allowed(message.from_user.id, showcase_open()):
         await message.answer("⛔ Доступ запрещен.")
         return
 

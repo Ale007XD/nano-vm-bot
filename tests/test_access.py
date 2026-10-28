@@ -237,3 +237,51 @@ class TestDailyLimit:
         monkeypatch.setattr(mock_db, "count_today_messages", boom)
         check = await check_daily_limit(999)
         assert check.allowed is True
+
+
+class TestShowcaseAccess:
+    def test_inherits_bot_flag_when_unset(self, monkeypatch, mock_settings):
+        from app.core.access import showcase_open
+
+        monkeypatch.setattr(mock_settings, "SHOWCASE_OPEN_ACCESS", None)
+        monkeypatch.setattr(mock_settings, "BOT_OPEN_ACCESS", True)
+        assert showcase_open() is True
+        monkeypatch.setattr(mock_settings, "BOT_OPEN_ACCESS", False)
+        assert showcase_open() is False
+
+    def test_own_flag_wins(self, monkeypatch, mock_settings):
+        from app.core.access import showcase_open
+
+        monkeypatch.setattr(mock_settings, "BOT_OPEN_ACCESS", False)
+        monkeypatch.setattr(mock_settings, "SHOWCASE_OPEN_ACCESS", True)
+        assert showcase_open() is True
+        monkeypatch.setattr(mock_settings, "BOT_OPEN_ACCESS", True)
+        monkeypatch.setattr(mock_settings, "SHOWCASE_OPEN_ACCESS", False)
+        assert showcase_open() is False
+
+    @pytest.mark.asyncio
+    async def test_private_bot_open_showcase(self, monkeypatch, mock_settings, mock_db):
+        from app.core.access import showcase_open, user_allowed
+
+        monkeypatch.setattr(mock_settings, "ADMIN_IDS", [1])
+        monkeypatch.setattr(mock_settings, "BOT_OPEN_ACCESS", False)
+        monkeypatch.setattr(mock_settings, "SHOWCASE_OPEN_ACCESS", True)
+        monkeypatch.setattr(mock_db, "is_user_banned", AsyncMock(return_value=False))
+        assert await user_allowed(999) is False  # основной бот закрыт
+        assert await user_allowed(999, showcase_open()) is True  # витрина открыта
+
+    @pytest.mark.asyncio
+    async def test_banned_blocked_in_open_showcase(self, monkeypatch, mock_settings, mock_db):
+        from app.core.access import user_allowed
+
+        monkeypatch.setattr(mock_settings, "ADMIN_IDS", [1])
+        monkeypatch.setattr(mock_db, "is_user_banned", AsyncMock(return_value=True))
+        assert await user_allowed(999, True) is False
+
+    @pytest.mark.asyncio
+    async def test_closed_showcase_still_admin_only(self, monkeypatch, mock_settings):
+        from app.core.access import user_allowed
+
+        monkeypatch.setattr(mock_settings, "ADMIN_IDS", [1])
+        assert await user_allowed(1, False) is True
+        assert await user_allowed(999, False) is False
