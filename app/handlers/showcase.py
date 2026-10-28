@@ -247,7 +247,7 @@ async def handle_message(message: Message):
         dialog_history.add(
             message.from_user.id, ROLE_BOT, response.content, KIND_ANSWER, sources=sources
         )
-        await deliver_via_message(processing_msg, answer)
+        await deliver_via_message(processing_msg, answer, reply_markup=escalate_kb)
 
     except Exception as e:
         logger.error(f"Error in showcase handler: {e}")

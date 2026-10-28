@@ -230,17 +230,23 @@ def format_memory(memory) -> str:
 # Индикатор «печатает…» и контекст текущего времени
 # ---------------------------------------------------------------------------
 
-async def deliver_via_message(processing_msg, text: str) -> None:
-    """Заменить статусное сообщение итоговым текстом (учитывая лимит 4096)."""
+async def deliver_via_message(processing_msg, text: str, reply_markup=None) -> None:
+    """Заменить статусное сообщение итоговым текстом (учитывая лимит 4096).
+
+    reply_markup прикрепляется к последнему сообщению.
+    """
     text = sanitize_html(text)
     if len(text) > 4000:
         await processing_msg.delete()
         chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for i, chunk in enumerate(chunks):
-            if i == 0:
-                await processing_msg.answer(chunk)
+            body = chunk if i == 0 else f"<i>(продолжение {i+1}/{len(chunks)})</i>\n\n{chunk}"
+            if i == len(chunks) - 1 and reply_markup is not None:
+                await processing_msg.answer(body, reply_markup=reply_markup)
             else:
-                await processing_msg.answer(f"<i>(продолжение {i+1}/{len(chunks)})</i>\n\n{chunk}")
+                await processing_msg.answer(body)
+    elif reply_markup is not None:
+        await processing_msg.edit_text(text, reply_markup=reply_markup)
     else:
         await processing_msg.edit_text(text)
 

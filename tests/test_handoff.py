@@ -398,3 +398,42 @@ class TestShowcaseRecording:
         await sc.handle_message(showcase_msg("вопрос A", 1)[0])
         await sc.handle_message(showcase_msg("вопрос B", 2)[0])
         assert history.last_client_text(1) == "вопрос A" and history.last_client_text(2) == "вопрос B"
+
+
+class TestDeliverKeyboard:
+    @pytest.mark.asyncio
+    async def test_markup_on_short_answer(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.utils.helpers import deliver_via_message
+
+        msg = MagicMock()
+        msg.edit_text = AsyncMock()
+        await deliver_via_message(msg, "ответ", reply_markup="KB")
+        msg.edit_text.assert_awaited_once_with("ответ", reply_markup="KB")
+
+    @pytest.mark.asyncio
+    async def test_markup_only_on_last_chunk(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.utils.helpers import deliver_via_message
+
+        msg = MagicMock()
+        msg.delete = AsyncMock()
+        msg.answer = AsyncMock()
+        await deliver_via_message(msg, "x" * 9000, reply_markup="KB")
+        calls = msg.answer.await_args_list
+        assert len(calls) == 3
+        assert all("reply_markup" not in c.kwargs for c in calls[:-1])
+        assert calls[-1].kwargs["reply_markup"] == "KB"
+
+    @pytest.mark.asyncio
+    async def test_no_markup_keeps_old_call(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.utils.helpers import deliver_via_message
+
+        msg = MagicMock()
+        msg.edit_text = AsyncMock()
+        await deliver_via_message(msg, "ответ")
+        msg.edit_text.assert_awaited_once_with("ответ")
