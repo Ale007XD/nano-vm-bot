@@ -1,10 +1,26 @@
 """
 Alex-Nano-Bot Configuration Module
 """
-from typing import List, Optional
+import json
+from typing import Annotated, List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+def _parse_id_list(v):
+    """Список ID из env: «1», «1,2», «[1,2]», пусто. NoDecode отключает JSON-разбор
+    pydantic-settings, из-за которого «1,2» и пустое значение роняли запуск."""
+    if isinstance(v, int):
+        return [v]
+    if isinstance(v, str):
+        v = v.strip()
+        if not v:
+            return []
+        if v.startswith("["):
+            return json.loads(v)
+        return [int(x.strip()) for x in v.split(",") if x.strip()]
+    return v
 
 # ---------------------------------------------------------------------------
 # Системные промпты агентов (дефолты; переопределяются через .env)
@@ -221,7 +237,7 @@ class Settings(BaseSettings):
     
     # Bot Configuration
     BOT_TOKEN: str = Field(..., description="Telegram Bot Token")
-    ADMIN_IDS: List[int] = Field(default=[], description="List of admin Telegram IDs")
+    ADMIN_IDS: Annotated[List[int], NoDecode] = Field(default=[], description="List of admin Telegram IDs")
 
     # Showcase (витрина): отдельная точка входа — демо-бот для клиентов,
     # отвечает строго по корпусу базы знаний. docker compose --profile showcase up -d
@@ -316,30 +332,20 @@ class Settings(BaseSettings):
         return v
 
     @field_validator("ADMIN_IDS", mode="before")
+    @classmethod
     def parse_admin_ids(cls, v):
-        if isinstance(v, int):
-            return [v]
-        if isinstance(v, str):
-            if v.strip() == "":
-                return []
-            return [int(x.strip()) for x in v.split(",")]
-        return v
+        return _parse_id_list(v)
 
     # Knowledge Base channels
-    KB_CHANNEL_IDS: List[int] = Field(
+    KB_CHANNEL_IDS: Annotated[List[int], NoDecode] = Field(
         default=[],
         description="Telegram channel IDs to monitor for articles (e.g. -1001234567890)"
     )
 
     @field_validator("KB_CHANNEL_IDS", mode="before")
+    @classmethod
     def parse_kb_channel_ids(cls, v):
-        if isinstance(v, int):
-            return [v]
-        if isinstance(v, str):
-            if v.strip() == "":
-                return []
-            return [int(x.strip()) for x in v.split(",")]
-        return v
+        return _parse_id_list(v)
 
     KB_STALE_DAYS: int = Field(
         default=30,
@@ -513,7 +519,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.8.0", description="Application version")
+    APP_VERSION: str = Field(default="1.9.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")
@@ -521,9 +527,7 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = Field(default="whisper-large-v3", description="Whisper model for transcription")
     ENABLE_VOICE_IN_GROUPS: bool = Field(default=True, description="Enable voice processing in groups")
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 # Global settings instance

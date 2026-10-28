@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.8.0 · **Тесты:** 290 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.9.0 · **Тесты:** 508 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -28,6 +28,8 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 - Суточные лимиты на пользователя (UTC): сообщения / LLM-запросы / токены
 - Учёт расхода токенов per-user: `/usage` (у админа — тотал по всем)
 - Динамическое управление лимитами: `/setlimit`, `/limits` — без рестарта
+- **BYOK:** пользователь подключает свои API-ключи (`/byok`) — запросы идут на его ключ, лимиты бота не применяются
+- **Кредиты и платежи:** пакеты запросов сверх бесплатного суточного лимита, оплата Telegram Stars / ЮKassa / Stripe (`/buy`, `/balance`)
 
 📚 **Контент:**
 - Пересланное фото с подписью: подпись с URL → статья в базу знаний + резюме; подпись без URL → резюме текста; без подписи → vision-анализ (Groq)
@@ -52,6 +54,9 @@ Self-hosted Telegram AI-бот с детерминированным Program-dri
 - Администратор загружает документы (`.md`, `.txt`) боту — они режутся на чанки и индексируются в отдельной коллекции ChromaDB.
 - Ответ строится только из релевантных чанков с перечнем источников; при отсутствии данных — честный отказ.
 - Команды: `/start`, `/help`, `/corpus_stats` (статус корпуса), `/corpus_upload` — загрузка документов в корпус (админ).
+- **Эскалация на оператора:** кнопка «Позвать оператора» под каждым ответом (и `/operator`) создаёт тему в супергруппе поддержки, пересылает сообщения в обе стороны; в карточку темы попадает переписка клиента с ботом и резюме от LLM. `/close` в теме или `/endchat` у клиента завершает обращение.
+- **Доступ и бюджет:** витрину можно открыть для всех (`SHOWCASE_OPEN_ACCESS=true`), оставив основной бот приватным; суточный лимит LLM-ответов на пользователя — `SHOWCASE_DAILY_LIMIT` (по умолчанию 20).
+- **Память:** эмбеддинг-модель грузится при первом вопросе и выгружается после простоя (~270 МиБ в покое вместо ~800 МиБ).
 
 ---
 
@@ -83,6 +88,11 @@ docker compose logs -f
 | `/models` | Выбор моделей по ролям (admin) |
 | `/remind`, `/daily`, `/weekly`, `/tasks` | Планировщик |
 | `/usage` | Ваш расход LLM-токенов за сегодня (UTC) |
+| `/byok set <провайдер> <ключ>`, `/byok` | Свои API-ключи (BYOK): подключить, статус, удалить |
+| `/buy`, `/balance`, `/paysupport` | Пакеты запросов (кредиты): купить, баланс, поддержка по платежам |
+| `/grant <id> <n>`, `/refund <№ платежа>` | Начислить кредиты / вернуть платёж (admin) |
+| `/operator`, `/endchat` | Витрина: позвать оператора / завершить обращение (клиент) |
+| `/close` | Витрина: закрыть обращение из темы оператора |
 | `/limits` | Текущие лимиты + расход по всем (admin) |
 | `/setlimit <messages\|requests\|tokens> <N>` | Задать суточный лимит, 0 — снять (admin) |
 | `/ban <id>`, `/unban <id>` | Бан-лист (admin) |
@@ -116,19 +126,24 @@ Alex-Nano-Bot/
 │   ├── core/                 # config, database, llm_client_v2, memory, scheduler,
 │   │   │                     # skills_loader (+SKILL.md), access (гейт+лимиты),
 │   │   │                     # usage (учёт токенов), mcp (внешние инструменты),
-│   │   │                     # net_guard (SSRF), web_search, crypto (Fernet)
+│   │   │                     # net_guard (SSRF), web_search, crypto (Fernet),
+│   │   │                     # byok, billing/ (кредиты, платежи), ext_db (таблицы
+│   │   │                     # расширений + автодобавление колонок),
+│   │   │                     # operator, dialog, handoff, support_events (эскалация)
 │   ├── runtime/              # VM, Planner, StateContext, instructions/
 │   │   └── instructions/     # call_llm, call_tool, respond, store_memory
 │   ├── handlers/             # commands, messages, providers, skills, memory,
-│   │                         # channel, reminders, showcase, fallback
+│   │                         # channel, reminders, showcase, operator, byok, billing, fallback
 │   ├── utils/                # keyboards, states, helpers (sanitize_html, typing)
 │   ├── bot.py
 │   └── bot_showcase.py       # демо-бот витрины службы поддержки (отдельная точка входа)
 ├── skills/system/ custom/ external/   # external: .py-навыки и папки с SKILL.md
 ├── data/                     # bot.db, vector_store/ (volume-mounted)
 ├── logs/                     # (volume-mounted)
-├── tests/                    # 290 тестов: runtime, access, usage, mcp, net_guard (SSRF),
-│                             # kb_isolation, tool_policy, skills_admin, skillmd, corpus, bot
+├── docs/                     # support-bot-design.md — проект бота поддержки на llm-nano-vm
+├── tests/                    # 508 тестов: runtime, access, usage, mcp, net_guard (SSRF),
+│                             # kb_isolation, tool_policy, skills_admin, skillmd, corpus, bot,
+│                             # byok, billing, operator/handoff, embedding_lifecycle, ext_migration, config_env
 ├── requirements.txt          # runtime-зависимости (aiogram 3.31+, chromadb 1.5+, mcp 1.x/2.x)
 ├── requirements-dev.txt      # pytest, pytest-asyncio, ruff, mypy (для CI и разработки)
 ├── ruff.toml                 # зафиксированный набор правил линтера
@@ -141,7 +156,7 @@ Alex-Nano-Bot/
 
 ## CI/CD
 
-GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runtime + pytest/ruff/mypy) · `ruff check app/ tests/` · `pytest tests/ -v` · **290/290 passed 🟢**
+GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runtime + pytest/ruff/mypy) · `ruff check app/ tests/` · `pytest tests/ -v` · **508/508 passed 🟢** (проверено на pytest 9.1 и 9.2)
 
 ---
 
@@ -156,6 +171,8 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | — | — | Дополнительные провайдеры |
 | `ENCRYPTION_KEY` | — | — | Fernet-ключ для хранения API-ключей в БД (`/providers`) |
 | `BOT_OPEN_ACCESS` | — | `false` | `true` — открытый режим: бот отвечает всем |
+| `SHOWCASE_OPEN_ACCESS` | — | не задано | Витрина отвечает всем независимо от основного бота (он остаётся приватным). Не задано или пусто — витрина наследует `BOT_OPEN_ACCESS` |
+| `SHOWCASE_DAILY_LIMIT` | — | `20` | Суточный лимит LLM-ответов витрины на пользователя (UTC; `0` — безлимит; админы не ограничены). Вопросы без ответа в базе знаний лимит не тратят. Учёт ведётся по `usage_daily` |
 | `USER_DAILY_MESSAGE_LIMIT` | — | `50` | Суточный лимит сообщений (0 — безлимит; меняется и через `/setlimit`) |
 | `KB_CHANNEL_IDS` | — | — | Каналы для базы знаний |
 | `KB_STALE_DAYS` | — | `30` | Статьи базы знаний старше N дней считаются устаревшими и обновляются при обращении |
@@ -171,7 +188,7 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `ENABLE_WEB_SEARCH` | — | `true` | Веб-поиск в FastBot/PlanBot и навыках |
 | `SERPER_API_KEY` / `SERPAPI_KEY` / `BING_API_KEY` | — | — | Ключи поисковых API (рекомендуется Serper); без ключей — бесплатный DuckDuckGo |
 | `WEB_SEARCH_RESULTS` | — | `3` | Результатов поиска на запрос |
-| `EMBEDDING_MODEL` | — | `sentence-transformers/all-MiniLM-L6-v2` | Модель эмбеддингов (fastembed) |
+| `EMBEDDING_MODEL` | — | `sentence-transformers/all-MiniLM-L6-v2` | Модель эмбеддингов (fastembed). Для русского лучше `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`; после смены модели векторное хранилище нужно переиндексировать |
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель демо-бота витрины |
 | `SHOWCASE_SYSTEM_PROMPT` | — | вшитый | Системный промпт демо-бота витрины |
@@ -203,11 +220,15 @@ docker compose build bot && docker compose up -d bot
 docker compose logs -f
 ```
 
+> ⚠️ Код копируется в образ (`COPY . .`), поэтому после обновления нужна пересборка: `docker compose build bot showcase`. Команда `up -d` без `build` образ не пересобирает; если контейнер не пересоздался, добавьте `--force-recreate`.
+
 Запуск витрины службы поддержки (отдельный процесс, свой токен):
 
 ```bash
 docker compose --profile showcase up -d showcase
 ```
+
+Витрина не зависит от основного бота: её можно держать открытой для пользователей (`SHOWCASE_OPEN_ACCESS=true`), а основной бот остановить (`docker compose stop bot`). Вместе с ним остановятся планировщик (напоминания) и остальные функции основного бота. Проверка памяти: `docker stats --no-stream`.
 
 ---
 
@@ -216,7 +237,7 @@ docker compose --profile showcase up -d showcase
 - Закрытый режим по умолчанию: только `ADMIN_IDS`; открытый — с бан-листом и лимитами
 - API-ключи Fernet-зашифрованы в БД; сообщение с ключом удаляется из чата
 - PII не в логах — только `user_id`
-- Суточные лимиты (сообщения / LLM-запросы / токены) защищают бюджет ключей
+- Суточные лимиты (сообщения / LLM-запросы / токены; для открытой витрины — `SHOWCASE_DAILY_LIMIT`) защищают бюджет ключей; лимит действует на пользователя, общего потолка расхода по витрине нет
 - SSRF-защита (`app/core/net_guard.py`): сетевые навыки не ходят на приватные адреса (localhost, RFC1918, 169.254.169.254); отключается `ALLOW_PRIVATE_URLS=true`
 - Политика инструментов Runtime VM: не-админам доступен только allowlist `RUNTIME_USER_TOOLS`; `user_id` подставляется навыку из контекста VM, а не из ответа planner
 - Админ-гейт на создание, редактирование и удаление Python-навыков (`/skills`) и установку SKILL.md
