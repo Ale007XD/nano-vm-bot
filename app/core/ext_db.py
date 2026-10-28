@@ -54,3 +54,48 @@ async def init_ext_tables(engine) -> None:
     _import_feature_models()
     async with engine.begin() as conn:
         await conn.run_sync(ExtBase.metadata.create_all)
+        if engine.dialect.name == "sqlite":
+            await conn.run_sync(_add_missing_columns)
+
+
+def _column_default_sql(column) -> str:
+    """DEFAULT для ALTER TABLE ADD COLUMN: у NOT NULL колонки он обязателен."""
+    from sqlalchemy import Boolean, Integer, Numeric
+    from sqlalchemy import Float as _Float
+
+    default = getattr(column.default, "arg", None)
+    if default is not None and not callable(default):
+        if isinstance(default, bool):
+            return str(int(default))
+        if isinstance(default, (int, float)):
+            return str(default)
+        return "'" + str(default).replace("'", "''") + "'"
+    if isinstance(column.type, (Boolean, Integer, Numeric, _Float)):
+        return "0"
+    return "''"
+
+
+def _add_missing_columns(sync_conn) -> None:
+    """create_all не добавляет колонки к уже существующим таблицам.
+
+    Для SQLite дописываем недостающие колонки моделей расширений, иначе после
+    обновления кода на старой БД падает «no such column».
+    """
+    from sqlalchemy import text
+
+    for table in ExtBase.metadata.sorted_tables:
+        existing = {
+            row[1]
+            for row in sync_conn.execute(text(f'PRAGMA table_info("{table.name}")'))
+        }
+        for column in table.columns:
+            if column.name in existing or column.primary_key:
+                continue
+            ddl = (
+                f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" '
+                f"{column.type.compile(dialect=sync_conn.dialect)}"
+            )
+            if not column.nullable:
+                ddl += f" NOT NULL DEFAULT {_column_default_sql(column)}"
+            logger.warning("ext schema: adding missing column %s.%s", table.name, column.name)
+            sync_conn.execute(text(ddl))
