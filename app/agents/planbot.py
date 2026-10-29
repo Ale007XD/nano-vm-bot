@@ -128,6 +128,21 @@ class PlanBotAgent:
         except Exception as e:
             logger.debug(f"on_status callback failed: {e}")
 
+    # Русские основы — совпадение с НАЧАЛА слова (\b), чтобы «план» не ловил «планета»/«планшет»
+    _RU_PLANNING_RE = re.compile(
+        r"\b(?:"
+        r"план(?:а|у|ом|е|ы|ов|ир\w*)?\b|спланир\w*|"
+        r"состав(?:ь|ьте)\b|созда(?:й|йте|ть)\b|постро(?:й|йте|ить)\b|"
+        r"разработ(?:ай|айте|ать)\b|спроектиру\w*|"
+        r"проанализиру\w*|анализ\w*|сравн(?:и|ите|ить|ение)\b|оцени\w*|"
+        r"стратеги\w*|дорожн\w*\s+карт\w*|роадмап\w*|"
+        r"пошагов\w*|шаги\b|этапы\b|процесс(?:а|у|ом|е|ы|ов)?\b|"
+        r"как\s+(?:сделать|создать|построить|организовать|запустить|внедрить)\b|"
+        r"помоги\s+(?:с\s+)?(?:план|состав|организ)\w*"
+        r")",
+        re.IGNORECASE,
+    )
+
     def _needs_planning(self, message: str) -> bool:
         """Determine if message requires multi-step planning"""
         planning_keywords = [
@@ -137,7 +152,9 @@ class PlanBotAgent:
         ]
 
         message_lower = message.lower()
-        return any(keyword in message_lower for keyword in planning_keywords)
+        if any(keyword in message_lower for keyword in planning_keywords):
+            return True
+        return bool(self._RU_PLANNING_RE.search(message_lower))
 
     async def _process_with_planning(
         self,
