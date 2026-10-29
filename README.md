@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.10.1 · **Тесты:** 656 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.10.2 · **Тесты:** 677 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -207,7 +207,7 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |
 | `WHISPER_MODEL` | — | `whisper-large-v3` | Распознавание голоса |
-| `FASTBOT_SYSTEM_PROMPT` / `PLANBOT_SYSTEM_PROMPT` / `SKILLBOT_SYSTEM_PROMPT` / `PLANNER_SYSTEM_PROMPT` | — | вшитые | Системные промпты (одной строкой, переносы `\n`) |
+| `FASTBOT_SYSTEM_PROMPT` / `PLANBOT_SYSTEM_PROMPT` / `SKILLBOT_SYSTEM_PROMPT` / `PLANNER_SYSTEM_PROMPT` | — | вшитые | Системные промпты (одной строкой в двойных кавычках, переносы `\n`). Заменяют встроенный промпт целиком — `PLANNER_SYSTEM_PROMPT` обязан содержать схему DSL. Обновить `.env` после релиза: `python3 scripts/migrate_env.py` → `.env.new` |
 | `DATABASE_URL` | — | `sqlite+aiosqlite:///data/bot.db` | |
 | `VECTOR_STORE_PATH` | — | `data/vector_store` | |
 

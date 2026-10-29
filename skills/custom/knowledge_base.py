@@ -191,13 +191,20 @@ async def _extract_entities(text: str, title: str, llm_client) -> dict:
 Теги — конкретные технологии/имена/продукты. Темы — широкие категории. Факты — конкретные цифры/события/утверждения."""
 
     try:
+        from app.core.llm_client_v2 import Message
+
         response = await llm_client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            system="Ты аналитик. Отвечай только JSON без markdown-оберток.",
-            max_tokens=600
+            messages=[
+                Message(role="system", content="Ты аналитик. Отвечай только JSON без markdown-оберток."),
+                Message(role="user", content=prompt),
+            ],
+            max_tokens=600,
         )
-        raw = response.strip().lstrip("```json").rstrip("```").strip()
-        return json.loads(raw)
+        raw = re.sub(r"```(?:json)?", "", response.content).strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError("в ответе LLM нет JSON-объекта")
+        return json.loads(raw[start:end + 1])
     except Exception as e:
         logger.warning(f"LLM extract failed: {e}")
         return {"summary": title, "tags": [], "topics": [], "key_facts": []}

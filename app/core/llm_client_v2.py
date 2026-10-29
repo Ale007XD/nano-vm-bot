@@ -17,6 +17,7 @@ Changelog:
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -115,6 +116,32 @@ class PendingTask:
     attempts: int = 0
     last_error: Optional[str] = None
     callback: Optional[Callable] = None
+
+
+# Максимум, сколько ждём снятия лимита у провайдера (сек). Подсказка дольше —
+# не ждём, а сразу идём к следующему провайдеру.
+MAX_RATE_LIMIT_WAIT = 15.0
+
+_HINT_RE = re.compile(r"try again in\s+([0-9hms.]+)", re.IGNORECASE)
+_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)", re.IGNORECASE)
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def _rate_limit_wait(exc: Exception) -> Optional[float]:
+    """Сколько секунд провайдер просит подождать при 429 («Please try again in 6.84s»).
+
+    None — это не 429 или подсказки нет (тогда работает обычная задержка между повторами).
+    """
+    text = str(exc)
+    if "429" not in text and "rate limit" not in text.lower():
+        return None
+    m = _HINT_RE.search(text)
+    if not m:
+        return None
+    parts = _UNIT_RE.findall(m.group(1))
+    if not parts:
+        return None
+    return sum(float(v) * _UNIT_SECONDS[u.lower()] for v, u in parts)
 
 
 def _is_auth_error(exc: Exception) -> bool:
@@ -511,8 +538,20 @@ class MultiProviderLLMClient:
                     if byok_mode and _is_auth_error(e):
                         break
 
+                    wait = _rate_limit_wait(e)
+                    if wait is not None and wait > MAX_RATE_LIMIT_WAIT:
+                        # лимит не снимется за разумное время — не ждём, к следующему провайдеру
+                        logger.warning(
+                            f"{provider.name}: лимит снимется через {wait:.0f}с — переключаюсь"
+                        )
+                        break
+
                     if attempt < max_attempts - 1:
-                        await asyncio.sleep(self.retry_delay * (attempt + 1))
+                        if wait is not None:
+                            # провайдер сам сказал, сколько ждать; короткие повторы только жгут попытки
+                            await asyncio.sleep(wait + 0.5)
+                        else:
+                            await asyncio.sleep(self.retry_delay * (attempt + 1))
                     else:
                         provider.error_count += 1
                         if provider.error_count >= 3:
