@@ -16,6 +16,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -288,21 +289,25 @@ async def add_usage_daily(telegram_id: int, usage: dict) -> None:
         ).scalar_one_or_none()
         if user is None:
             return
+        user_id = user.id  # после rollback ORM-объект протухает — берём значение заранее
 
-        result = await session.execute(
-            update(UsageDaily)
-            .where(UsageDaily.user_id == user.id, UsageDaily.date == date_str)
-            .values(
-                prompt_tokens=UsageDaily.prompt_tokens + prompt,
-                completion_tokens=UsageDaily.completion_tokens + completion,
-                total_tokens=UsageDaily.total_tokens + total,
-                requests=UsageDaily.requests + requests,
+        def _increment():
+            return (
+                update(UsageDaily)
+                .where(UsageDaily.user_id == user_id, UsageDaily.date == date_str)
+                .values(
+                    prompt_tokens=UsageDaily.prompt_tokens + prompt,
+                    completion_tokens=UsageDaily.completion_tokens + completion,
+                    total_tokens=UsageDaily.total_tokens + total,
+                    requests=UsageDaily.requests + requests,
+                )
             )
-        )
+
+        result = await session.execute(_increment())
         if result.rowcount == 0:
             session.add(
                 UsageDaily(
-                    user_id=user.id,
+                    user_id=user_id,
                     date=date_str,
                     prompt_tokens=prompt,
                     completion_tokens=completion,
@@ -310,6 +315,14 @@ async def add_usage_daily(telegram_id: int, usage: dict) -> None:
                     requests=requests,
                 )
             )
+            try:
+                await session.commit()
+                return
+            except IntegrityError:
+                # параллельный запрос первым создал строку за сутки —
+                # прибавляем свой расход к ней (иначе он был бы потерян)
+                await session.rollback()
+                await session.execute(_increment())
         await session.commit()
 
 

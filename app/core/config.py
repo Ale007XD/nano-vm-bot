@@ -283,6 +283,10 @@ class Settings(BaseSettings):
         default=20, ge=0,
         description="Суточный лимит LLM-ответов витрины на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
     )
+    RAG_MEMORIES: int = Field(
+        default=10, ge=0, le=50,
+        description="Сколько воспоминаний подмешивать в контекст Planner (RAG) на один запрос"
+    )
     USER_DAILY_MESSAGE_LIMIT: int = Field(
         default=50,
         description="Суточный лимит сообщений на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
@@ -527,7 +531,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.10.0", description="Application version")
+    APP_VERSION: str = Field(default="1.10.1", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

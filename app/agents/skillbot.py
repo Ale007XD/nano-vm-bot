@@ -244,9 +244,8 @@ def setup_handlers():
         """Handle skill search request"""
         
         # Extract search query
-        search_terms = message.lower()
-        for prefix in ['find', 'search', 'look for', 'find skill', 'search for']:
-            search_terms = search_terms.replace(prefix, '').strip()
+        # служебные слова («найди навык», "search for") отбрасывает сам skill_loader
+        search_terms = message.lower().strip()
         
         # Search in loaded skills
         local_results = skill_loader.search_skills(search_terms)

@@ -181,7 +181,7 @@ async def handle_message(message: Message, state: FSMContext):
                     context_data = await vector_memory.get_relevant_context(
                         query=user_message_for_agent,
                         user_id=user.id,
-                        n_memories=10,
+                        n_memories=settings.RAG_MEMORIES,
                         n_conversations=1
                     )
                     memories = context_data.get('memories', [])
@@ -733,7 +733,7 @@ async def handle_voice(message: Message, state: FSMContext):
                     context_data = await vector_memory.get_relevant_context(
                         query=transcribed_text,
                         user_id=user.id,
-                        n_memories=10,
+                        n_memories=settings.RAG_MEMORIES,
                         n_conversations=1
                     )
                     memories = context_data.get('memories', [])

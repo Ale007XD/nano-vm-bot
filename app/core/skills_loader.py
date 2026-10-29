@@ -265,6 +265,35 @@ class SkillLoader:
     def list_skills(self) -> List[SkillInfo]:
         return list(self._skills.values())
 
+    _SEARCH_STOPWORDS = frozenset({
+        "find", "search", "look", "for", "skill", "skills", "the", "a", "an",
+        "найди", "найти", "поищи", "поиск", "ищи", "навык", "навыки", "навыков", "про", "для",
+    })
+
+    def search_skills(self, query: str) -> List[SkillInfo]:
+        """Поиск среди загруженных навыков по имени, описанию, категории и командам.
+
+        Служебные слова запроса («найди навык», "search for") отбрасываются; навык
+        подходит, если содержит хотя бы одно из оставшихся слов. Чем больше слов
+        совпало — тем выше в выдаче. Пустой запрос — пусто.
+        """
+        terms = [
+            t for t in (query or "").lower().split()
+            if t and t not in self._SEARCH_STOPWORDS
+        ]
+        if not terms:
+            return []
+        scored = []
+        for info in self._skills.values():
+            hay = " ".join(
+                [info.name, info.description or "", info.category or "", *info.commands]
+            ).lower()
+            hits = sum(1 for t in terms if t in hay)
+            if hits:
+                scored.append((hits, info))
+        scored.sort(key=lambda x: (-x[0], x[1].name))
+        return [info for _, info in scored]
+
     def get_skill_info(self, name: str) -> Optional[SkillInfo]:
         return self._skills.get(name)
 
