@@ -85,9 +85,6 @@ logs/*.log
 .env.local
 .env.*.local
 
-# Docker
-.dockerignore
-
 # Keep directories
 !data/.gitkeep
 !logs/.gitkeep

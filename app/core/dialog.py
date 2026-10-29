@@ -15,7 +15,7 @@ import re
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
-from typing import Deque, List, Optional, Sequence, Tuple
+from typing import Deque, Hashable, List, Optional, Sequence, Tuple
 
 ROLE_CLIENT = "client"
 ROLE_BOT = "bot"
@@ -51,11 +51,11 @@ class DialogHistory:
         self.ttl = ttl
         self.text_limit = text_limit
         self._clock = clock
-        self._data: "OrderedDict[int, Deque[Turn]]" = OrderedDict()
+        self._data: "OrderedDict[Hashable, Deque[Turn]]" = OrderedDict()
 
     def add(
         self,
-        client_id: int,
+        client_id: Hashable,
         role: str,
         text: str,
         kind: str = "",
@@ -72,7 +72,7 @@ class DialogHistory:
         while len(self._data) > self.max_clients:
             self._data.popitem(last=False)
 
-    def recent(self, client_id: int, n: Optional[int] = None) -> List[Turn]:
+    def recent(self, client_id: Hashable, n: Optional[int] = None) -> List[Turn]:
         q = self._data.get(client_id)
         if not q:
             return []
@@ -85,13 +85,13 @@ class DialogHistory:
                 del self._data[client_id]
         return fresh[-n:] if n else fresh
 
-    def last_client_text(self, client_id: int) -> str:
+    def last_client_text(self, client_id: Hashable) -> str:
         for t in reversed(self.recent(client_id)):
             if t.role == ROLE_CLIENT:
                 return t.text
         return ""
 
-    def clear(self, client_id: int) -> None:
+    def clear(self, client_id: Hashable) -> None:
         self._data.pop(client_id, None)
 
 

@@ -57,6 +57,38 @@ async def user_allowed(telegram_id: int, open_access: Optional[bool] = None) -> 
         return True
 
 
+async def showcase_allowed(showcase, telegram_id: int) -> bool:
+    """Пропускать ли пользователя в витрину showcase.
+
+    Админ — всегда. Забаненные (общий /ban) — никогда. Открытая витрина — всем.
+    Закрытая (invite) — только участникам; при сбое БД доступ закрыт (приватность
+    важнее), в отличие от открытого режима, где сбой бан-листа не блокирует всех.
+    """
+    from app.core.showcases import ACCESS_OPEN
+
+    if is_admin(telegram_id):
+        return True
+    open_mode = showcase.access == ACCESS_OPEN
+    try:
+        from app.core.database import is_user_banned
+
+        if await is_user_banned(telegram_id):
+            return False
+    except Exception as e:
+        logger.warning(f"Ban-list check failed for {telegram_id}: {e}")
+        if not open_mode:
+            return False
+    if open_mode:
+        return True
+    try:
+        from app.core.showcase_access import is_member
+
+        return await is_member(showcase.slug, telegram_id)
+    except Exception as e:
+        logger.warning(f"Showcase membership check failed for {telegram_id}: {e}")
+        return False
+
+
 DEFAULT_USER_TOOLS = frozenset({"validated_answer"})
 
 

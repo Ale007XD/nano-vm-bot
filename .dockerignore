@@ -1,0 +1,16 @@
+# Не копировать в образ: секреты, данные и служебное (код и skills нужны, остальное — нет)
+.env
+.env.*
+!.env.example
+.git
+.github
+.gitignore
+data
+logs
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests
+*.Zone.Identifier

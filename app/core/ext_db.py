@@ -24,6 +24,7 @@ ExtBase = declarative_base()
 _FEATURE_MODULES = (
     "app.core.byok",
     "app.core.operator",
+    "app.core.showcase_access",
     "app.core.billing.models",
 )
 
@@ -56,6 +57,19 @@ async def init_ext_tables(engine) -> None:
         await conn.run_sync(ExtBase.metadata.create_all)
         if engine.dialect.name == "sqlite":
             await conn.run_sync(_add_missing_columns)
+
+    if engine.dialect.name == "sqlite":
+        # отдельная транзакция: основной бот и витрина стартуют одновременно и могут
+        # обе пытаться пересоздать таблицу — проигравший не должен ронять запуск
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(_migrate_operator_sessions_pk)
+        except Exception as e:
+            logger.error(
+                "ext schema: миграция operator_sessions не выполнена (%s: %s) — "
+                "вероятно, её выполнил параллельный процесс; перезапустите контейнер",
+                type(e).__name__, e,
+            )
 
 
 def _column_default_sql(column) -> str:
@@ -99,3 +113,52 @@ def _add_missing_columns(sync_conn) -> None:
                 ddl += f" NOT NULL DEFAULT {_column_default_sql(column)}"
             logger.warning("ext schema: adding missing column %s.%s", table.name, column.name)
             sync_conn.execute(text(ddl))
+
+
+def _migrate_operator_sessions_pk(sync_conn) -> None:
+    """operator_sessions: ключ client_id -> (tenant, client_id) (раздельные витрины).
+
+    SQLite не умеет менять первичный ключ, поэтому таблица пересоздаётся. DDL в
+    SQLite не откатывается транзакцией, поэтому порядок такой, чтобы сбой в
+    середине не терял данные: новая таблица создаётся под временным именем,
+    данные копируются, и только затем старая удаляется, а новая переименовывается.
+    Существующие строки получают пустой tenant (наследная витрина). Вызывается
+    после _add_missing_columns — колонка summary уже есть.
+    """
+    from sqlalchemy import MetaData, text
+    from sqlalchemy.schema import CreateTable
+
+    cols = {
+        row[1]
+        for row in sync_conn.execute(text('PRAGMA table_info("operator_sessions")'))
+    }
+    if not cols or "tenant" in cols:
+        return
+
+    table = ExtBase.metadata.tables["operator_sessions"]
+    sync_conn.execute(text("DROP TABLE IF EXISTS operator_sessions_new"))  # хвост сорванной миграции
+    # имена индексов старой таблицы нужны новой
+    for (name,) in sync_conn.execute(
+        text(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='operator_sessions' AND sql IS NOT NULL"
+        )
+    ).fetchall():
+        sync_conn.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
+
+    tmp = table.to_metadata(MetaData(), name="operator_sessions_new")
+    sync_conn.execute(CreateTable(tmp))
+    sync_conn.execute(
+        text(
+            "INSERT INTO operator_sessions_new "
+            "(tenant, client_id, thread_id, status, client_name, summary, opened_at, updated_at) "
+            "SELECT '', client_id, COALESCE(thread_id, 0), COALESCE(status, 'closed'), "
+            "COALESCE(client_name, ''), COALESCE(summary, ''), opened_at, updated_at "
+            "FROM operator_sessions"
+        )
+    )
+    sync_conn.execute(text("DROP TABLE operator_sessions"))
+    sync_conn.execute(text("ALTER TABLE operator_sessions_new RENAME TO operator_sessions"))
+    for index in table.indexes:
+        index.create(sync_conn)
+    logger.warning("ext schema: operator_sessions rebuilt with composite key (tenant, client_id)")

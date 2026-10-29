@@ -3,8 +3,12 @@
 
 Клиент:  /operator или кнопка «Позвать оператора» (под ответом «не нашёл»);
          /endchat — вернуться к боту.
-Оператор: пишет в теме клиента в группе поддержки (OPERATOR_CHAT_ID);
+Оператор: пишет в теме клиента в группе поддержки своей витрины
+         (operator_chat_id витрины; у наследной — OPERATOR_CHAT_ID);
          /close в теме — завершить обращение.
+
+Витрин несколько: какая из них обрабатывает обновление, определяет
+app.core.showcases.current(); сессии, истории и антифлуд разделены по витринам.
 
 Роутер подключается в bot_showcase.py ПЕРЕД основным роутером витрины,
 чтобы сообщения клиента в активной сессии не уходили в LLM.
@@ -21,9 +25,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core import handoff, support_events
 from app.core import operator as store
-from app.core.access import user_allowed
-from app.core.config import settings
+from app.core.access import showcase_allowed
 from app.core.dialog import history
+from app.core.showcases import current as current_showcase
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +42,24 @@ _COPYABLE = {
     "text", "photo", "document", "voice", "video", "audio", "video_note",
     "animation", "sticker", "location", "contact",
 }
-_CLIENT_OWN_COMMANDS = {"start", "help", "operator", "endchat"}
+_CLIENT_OWN_COMMANDS = {
+    "start", "help", "operator", "endchat",
+    "invite", "invites", "revoke_invite", "allow", "deny", "members",
+    "corpus_stats", "corpus_upload",
+}
 
 
 def operator_chat_id() -> int:
-    val = getattr(settings, "OPERATOR_CHAT_ID", 0)
-    return val if isinstance(val, int) and not isinstance(val, bool) else 0
+    """Группа оператора текущей витрины."""
+    return current_showcase().operator_chat_id
+
+
+def _tenant() -> str:
+    return current_showcase().slug
+
+
+def _key(user_id: int):
+    return current_showcase().client_key(user_id)
 
 
 def operator_enabled() -> bool:
@@ -80,7 +96,7 @@ async def client_in_session(message: Message) -> bool:
         return False
     if not operator_enabled():
         return False
-    return await store.get_open_by_client(message.from_user.id) is not None
+    return await store.get_open_by_client(message.from_user.id, tenant=_tenant()) is not None
 
 
 # ----------------------------- вспомогательное --------------------------- #
@@ -114,15 +130,18 @@ async def _create_topic_and_card(bot, user, turns) -> int:
 
 async def _post_summary(bot, client_id: int, thread_id: int, turns) -> None:
     """Резюме от LLM отдельным сообщением в теме. Любой сбой — не критичен."""
-    summary = await handoff.build_summary(turns)
+    summary = await handoff.build_summary(turns, model=current_showcase().model or None)
     if not summary:
         return
     try:
-        await store.set_summary(client_id, summary)
+        await store.set_summary(client_id, summary, tenant=_tenant())
         await bot.send_message(
             operator_chat_id(), "🧾 <b>Резюме</b>\n" + html.escape(summary), message_thread_id=thread_id
         )
-        await support_events.emit(support_events.SUMMARY, client_id=client_id, thread_id=thread_id, summary=summary)
+        await support_events.emit(
+            support_events.SUMMARY, tenant=_tenant(), client_id=client_id,
+            thread_id=thread_id, summary=summary,
+        )
     except Exception as e:
         logger.warning("summary post failed for %s: %s", client_id, e)
 
@@ -143,8 +162,10 @@ async def _forward_to_topic(bot, session_row, message: Message) -> bool:
             return False
     # тему удалили вручную — создаём новую и повторяем
     try:
-        thread_id = await _create_topic_and_card(bot, message.from_user, history.recent(message.from_user.id))
-        await store.set_thread(message.from_user.id, thread_id)
+        thread_id = await _create_topic_and_card(
+            bot, message.from_user, history.recent(_key(message.from_user.id))
+        )
+        await store.set_thread(message.from_user.id, thread_id, tenant=_tenant())
         await bot.copy_message(
             chat_id=operator_chat_id(),
             from_chat_id=message.chat.id,
@@ -158,9 +179,11 @@ async def _forward_to_topic(bot, session_row, message: Message) -> bool:
 
 
 async def _end_session(bot, client_id: int, thread_id: Optional[int], notify_client: str) -> None:
-    await store.close_session(client_id)
-    history.clear(client_id)
-    await support_events.emit(support_events.CLOSED, client_id=client_id, thread_id=thread_id)
+    await store.close_session(client_id, tenant=_tenant())
+    history.clear(_key(client_id))
+    await support_events.emit(
+        support_events.CLOSED, tenant=_tenant(), client_id=client_id, thread_id=thread_id
+    )
     if thread_id is not None and operator_enabled():
         try:
             await bot.close_forum_topic(chat_id=operator_chat_id(), message_thread_id=thread_id)
@@ -175,19 +198,19 @@ async def _end_session(bot, client_id: int, thread_id: Optional[int], notify_cli
 
 async def start_escalation(bot, user, chat_id: int, reply) -> None:
     """Общая логика /operator и кнопки. reply(text) — как ответить клиенту."""
-    if not await user_allowed(user.id):
+    if not await showcase_allowed(current_showcase(), user.id):
         await reply("⛔ Доступ запрещен.")
         return
     if not operator_enabled():
         await reply("Оператор сейчас недоступен. Попробуйте задать вопрос боту или обратитесь позже.")
         return
 
-    existing = await store.get_open_by_client(user.id)
+    existing = await store.get_open_by_client(user.id, tenant=_tenant())
     if existing:
         await reply("Вы уже на связи с оператором — просто пишите сюда. /endchat — вернуться к боту.")
         return
 
-    turns = history.recent(user.id)
+    turns = history.recent(_key(user.id))
     try:
         thread_id = await _create_topic_and_card(bot, user, turns)
     except Exception as e:
@@ -195,14 +218,16 @@ async def start_escalation(bot, user, chat_id: int, reply) -> None:
         await reply("⚠️ Не удалось связаться с оператором. Попробуйте позже.")
         return
 
-    await store.open_session(user.id, thread_id, _display_name(user))
+    await store.open_session(user.id, thread_id, _display_name(user), tenant=_tenant())
     await reply(
         "👤 <b>Передаю вопрос оператору.</b>\n\n"
         "Пишите сюда всё, что нужно (текст, фото, файлы) — я перешлю в службу поддержки, "
         "ответ придёт в этот чат. Сообщения видят сотрудники поддержки.\n\n"
         "/endchat — вернуться к боту."
     )
-    await support_events.emit(support_events.OPENED, client_id=user.id, thread_id=thread_id)
+    await support_events.emit(
+        support_events.OPENED, tenant=_tenant(), client_id=user.id, thread_id=thread_id
+    )
     await _post_summary(bot, user.id, thread_id, turns)
 
 
@@ -224,7 +249,7 @@ async def cb_call_operator(callback: CallbackQuery):
 
 @router.message(Command("endchat"), F.chat.type == "private")
 async def cmd_endchat(message: Message):
-    row = await store.get_open_by_client(message.from_user.id)
+    row = await store.get_open_by_client(message.from_user.id, tenant=_tenant())
     if not row:
         await message.answer("Активного обращения к оператору нет.")
         return
@@ -244,7 +269,7 @@ async def cmd_endchat(message: Message):
 # ----------------------------- оператор ---------------------------------- #
 @router.message(Command("close"), in_operator_topic)
 async def cmd_close(message: Message):
-    row = await store.get_open_by_thread(message.message_thread_id)
+    row = await store.get_open_by_thread(message.message_thread_id, tenant=_tenant())
     if not row:
         await message.reply("Эта тема не связана с открытым обращением.")
         return
@@ -260,7 +285,7 @@ async def operator_reply(message: Message):
     """Сообщение оператора в теме → клиенту."""
     if message.content_type not in _COPYABLE:
         return
-    row = await store.get_open_by_thread(message.message_thread_id)
+    row = await store.get_open_by_thread(message.message_thread_id, tenant=_tenant())
     if not row:
         return
     try:
@@ -270,7 +295,7 @@ async def operator_reply(message: Message):
             message_id=message.message_id,
         )
     except TelegramForbiddenError:
-        await store.close_session(row.client_id)
+        await store.close_session(row.client_id, tenant=_tenant())
         await message.reply("⚠️ Клиент заблокировал бота — обращение закрыто.")
     except TelegramBadRequest as e:
         logger.warning("operator reply not delivered to %s: %s", row.client_id, e)
@@ -283,14 +308,15 @@ async def client_message(message: Message):
     if message.content_type not in _COPYABLE:
         return
     uid = message.from_user.id
-    if not _limiter.allow(uid):
-        if uid not in _warned_flood:
-            _warned_flood.add(uid)
+    key = _key(uid)
+    if not _limiter.allow(key):
+        if key not in _warned_flood:
+            _warned_flood.add(key)
             await message.answer("⏳ Слишком много сообщений подряд — подождите минуту.")
         return
-    _warned_flood.discard(uid)
+    _warned_flood.discard(key)
 
-    row = await store.get_open_by_client(uid)
+    row = await store.get_open_by_client(uid, tenant=_tenant())
     if not row:
         return
     if not await _forward_to_topic(message.bot, row, message):

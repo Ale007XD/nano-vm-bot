@@ -48,6 +48,20 @@ def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+DEFAULT_CORPUS = "corpus"
+_CORPUS_NAME_RE = re.compile(r"^corpus(_[a-z0-9_]{1,40})?$")
+
+
+def _check_corpus_name(name: str) -> str:
+    """Имя коллекции корпуса: только «corpus» или «corpus_<имя>».
+
+    Не даёт указать служебные коллекции (memories, skills, conversations).
+    """
+    if not isinstance(name, str) or not _CORPUS_NAME_RE.match(name):
+        raise ValueError(f"Недопустимое имя коллекции корпуса: {name!r}")
+    return name
+
+
 class VectorMemory:
     """Vector memory system for storing and retrieving relevant context"""
 
@@ -473,6 +487,20 @@ class VectorMemory:
 
         return [c for c in chunks if c]
 
+    async def ensure_corpus(self, corpus: str = DEFAULT_CORPUS):
+        """Коллекция корпуса витрины (создаётся при первом обращении)."""
+        _check_corpus_name(corpus)
+        await self.initialize()
+        col = self.collections.get(corpus)
+        if col is None:
+            col = await asyncio.to_thread(
+                self.chroma_client.get_or_create_collection,
+                name=corpus,
+                metadata={"description": f"Showcase knowledge corpus: {corpus}"},
+            )
+            self.collections[corpus] = col
+        return col
+
     async def add_corpus_document(
         self,
         source_id: str,
@@ -480,7 +508,8 @@ class VectorMemory:
         content: str,
         source_url: Optional[str] = None,
         chunk_size: Optional[int] = None,
-        chunk_overlap: Optional[int] = None
+        chunk_overlap: Optional[int] = None,
+        corpus: str = DEFAULT_CORPUS,
     ) -> str:
         """Add a document to the showcase knowledge corpus.
 
@@ -488,7 +517,7 @@ class VectorMemory:
         separate ChromaDB document with shared source metadata.
         Returns the source_id.
         """
-        await self.initialize()
+        collection = await self.ensure_corpus(corpus)
 
         chunk_size = chunk_size or settings.CORPUS_CHUNK_SIZE
         chunk_overlap = chunk_overlap or settings.CORPUS_CHUNK_OVERLAP
@@ -523,7 +552,7 @@ class VectorMemory:
                 }))
 
             await asyncio.to_thread(
-                self.collections['corpus'].add,
+                collection.add,
                 ids=ids,
                 embeddings=embeddings,
                 documents=documents,
@@ -542,10 +571,11 @@ class VectorMemory:
     async def search_corpus(
         self,
         query: str,
-        n_results: Optional[int] = None
+        n_results: Optional[int] = None,
+        corpus: str = DEFAULT_CORPUS,
     ) -> List[Dict[str, Any]]:
-        """Semantic search in the showcase knowledge corpus."""
-        await self.initialize()
+        """Semantic search in the showcase knowledge corpus (одной витрины)."""
+        collection = await self.ensure_corpus(corpus)
 
         n_results = n_results or settings.CORPUS_TOP_K
 
@@ -553,7 +583,7 @@ class VectorMemory:
             query_embedding = await asyncio.to_thread(self._embed_text, query)
 
             results = await asyncio.to_thread(
-                self.collections['corpus'].query,
+                collection.query,
                 query_embeddings=[query_embedding],
                 n_results=n_results,
                 include=["documents", "metadatas", "distances"]
@@ -575,13 +605,15 @@ class VectorMemory:
             logger.error(f"Failed to search corpus: {e}")
             return []
 
-    async def delete_corpus_document(self, source_id: str) -> bool:
+    async def delete_corpus_document(
+        self, source_id: str, corpus: str = DEFAULT_CORPUS
+    ) -> bool:
         """Delete all chunks of a corpus document by source_id."""
-        await self.initialize()
+        collection = await self.ensure_corpus(corpus)
 
         try:
             await asyncio.to_thread(
-                self.collections['corpus'].delete,
+                collection.delete,
                 where={"source_id": source_id}
             )
             logger.info(f"Deleted corpus document {source_id}")
@@ -590,12 +622,12 @@ class VectorMemory:
             logger.error(f"Failed to delete corpus document {source_id}: {e}")
             return False
 
-    async def get_corpus_stats(self) -> Dict[str, int]:
+    async def get_corpus_stats(self, corpus: str = DEFAULT_CORPUS) -> Dict[str, int]:
         """Get corpus statistics (document count and chunk count)."""
-        await self.initialize()
+        collection = await self.ensure_corpus(corpus)
 
         try:
-            count = self.collections['corpus'].count()
+            count = collection.count()
             return {
                 "documents": count,  # Chroma count = chunks; docs ≈ chunks
                 "chunks": count

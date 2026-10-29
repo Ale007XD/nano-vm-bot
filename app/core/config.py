@@ -267,6 +267,14 @@ class Settings(BaseSettings):
         default=False,
         description="Открытый режим: бот отвечает любому пользователю (кроме забаненных через /ban)"
     )
+    SHOWCASES: str = Field(
+        default="",
+        description=(
+            "Раздельные витрины: JSON-список объектов "
+            "{slug, token|token_env, collection?, access (invite|open), operator_chat_id?, "
+            "name?, system_prompt?, model?, welcome?}. Пусто — одна витрина по SHOWCASE_BOT_TOKEN"
+        ),
+    )
     SHOWCASE_OPEN_ACCESS: Optional[bool] = Field(
         default=None,
         description="Витрина открыта для всех. Не задано — как BOT_OPEN_ACCESS"
@@ -519,7 +527,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.9.0", description="Application version")
+    APP_VERSION: str = Field(default="1.10.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")
@@ -527,7 +535,11 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = Field(default="whisper-large-v3", description="Whisper model for transcription")
     ENABLE_VOICE_IN_GROUPS: bool = Field(default=True, description="Enable voice processing in groups")
     
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": в .env бывают переменные для docker compose и токены витрин
+    # (token_env), которых нет среди полей — без этого запуск падал extra_forbidden
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
 
 # Global settings instance

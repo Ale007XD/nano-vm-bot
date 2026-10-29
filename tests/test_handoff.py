@@ -165,7 +165,7 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(st, "OPERATOR_CHAT_ID", GROUP)
     monkeypatch.setattr(st, "ADMIN_IDS", [999])
     monkeypatch.setattr(st, "BOT_TIMEZONE", "UTC")
-    monkeypatch.setattr(h, "user_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(h, "showcase_allowed", AsyncMock(return_value=True))
     # по умолчанию резюме «не вышло» — реальный LLM в тестах не вызываем
     monkeypatch.setattr(handoff, "build_summary", AsyncMock(return_value=None))
     history._data.clear()
@@ -220,7 +220,7 @@ class TestEscalationWithSummary:
         msg_obj = make_msg(make_bot())
         msg_obj.answer = AsyncMock(side_effect=lambda *a, **k: order.append("client"))
 
-        async def slow(turns):
+        async def slow(turns, **kwargs):
             order.append("summary")
             return "r"
 
@@ -355,7 +355,7 @@ def showcase_msg(text="как вернуть товар?", uid=CLIENT):
 
 @pytest.fixture
 def showcase_env(monkeypatch):
-    monkeypatch.setattr(sc, "user_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(sc, "showcase_allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(sc, "start_typing", MagicMock())
     monkeypatch.setattr(sc, "stop_typing", MagicMock())
     monkeypatch.setattr(sc, "start_usage_session", MagicMock())

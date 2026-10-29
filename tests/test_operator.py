@@ -49,7 +49,7 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(settings, "OPERATOR_CHAT_ID", GROUP)
     monkeypatch.setattr(settings, "ADMIN_IDS", [999])
     monkeypatch.setattr(settings, "BOT_TIMEZONE", "UTC")
-    monkeypatch.setattr(h, "user_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(h, "showcase_allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(h, "_limiter", store.RateLimiter(max_events=3, window=60))
     h._warned_flood.clear()
     history._data.clear()
@@ -155,7 +155,7 @@ class TestEscalation:
 
     @pytest.mark.asyncio
     async def test_banned_user_denied(self, sm, monkeypatch):
-        monkeypatch.setattr(h, "user_allowed", AsyncMock(return_value=False))
+        monkeypatch.setattr(h, "showcase_allowed", AsyncMock(return_value=False))
         bot = make_bot()
         msg = make_msg(bot)
         await h.cmd_operator(msg)
