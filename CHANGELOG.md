@@ -2,6 +2,11 @@
 
 All notable changes to Alex-Nano-Bot will be documented in this file.
 
+## [1.11.2] - 2026-10-30
+
+### Fixed
+- **Ссылки YouTube `/live/…` не распознавались**: бот отвечал «не могу посмотреть видео» вместо получения транскрипта. Обработчик и навык `youtube_transcript` имели разные, неполные шаблоны; теперь один общий (`app/utils/youtube.py`): `youtu.be/`, `watch?v=` (в т.ч. `watch?feature=share&v=`), `/live/`, `/shorts/`, `/embed/`, `/v/`, хосты `m.`, `music.`, `youtube-nocookie.com`
+
 ## [1.11.1] - 2026-10-30
 
 ### Fixed

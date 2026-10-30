@@ -39,6 +39,7 @@ from app.utils.helpers import (
     start_typing,
     stop_typing,
 )
+from app.utils.youtube import YOUTUBE_RE
 
 _vm_registry = default_registry()
 _vm = ExecutionVM(_vm_registry)
@@ -50,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-YOUTUBE_RE = re.compile(r'(youtu\.be/|youtube\.com/(watch\?v=|shorts/))[\w\-]+')
 
 # Триггеры для включения self-check в vision
 VISION_VERIFY_TRIGGERS = [

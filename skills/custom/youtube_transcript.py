@@ -11,16 +11,7 @@ import tempfile
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
 
-
-def extract_video_id(url: str) -> str | None:
-    patterns = [
-        r'(?:v=|youtu\.be/|embed/|shorts/)([a-zA-Z0-9_-]{11})',
-    ]
-    for p in patterns:
-        m = re.search(p, url)
-        if m:
-            return m.group(1)
-    return None
+from app.utils.youtube import extract_video_id
 
 
 async def run(context: dict) -> str:
@@ -28,7 +19,7 @@ async def run(context: dict) -> str:
     video_id = extract_video_id(text)
 
     if not video_id:
-        return "Не найден ID видео. Отправь ссылку вида https://youtu.be/xxx или https://youtube.com/watch?v=xxx"
+        return "Не найден ID видео. Отправь ссылку вида https://youtu.be/xxx, https://youtube.com/watch?v=xxx или https://youtube.com/live/xxx"
 
     # Попытка 1: youtube-transcript-api
     try:
