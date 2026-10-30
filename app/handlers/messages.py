@@ -90,6 +90,9 @@ async def handle_message(message: Message, state: FSMContext):
 
     start_usage_session(user.id)
 
+    # «печатает…» продлевается фоновой задачей: её нужно остановить на ЛЮБОМ выходе
+    # (ранние return — ссылка в базу знаний, ошибка YouTube — иначе индикатор висит до 3 минут)
+    typing_task = None
     try:
         async with async_session_maker() as session:
             db_user = await get_or_create_user(
@@ -293,6 +296,9 @@ async def handle_message(message: Message, state: FSMContext):
             "⚠️ <b>Извините, произошла ошибка при обработке вашего сообщения.</b>\n\n"
             "Пожалуйста, попробуйте снова или используйте /help для помощи."
         )
+    finally:
+        stop_typing(typing_task)
+        await flush_usage()  # повторный вызов безопасен: после первого сессия уже закрыта
 
 
 @router.message(F.photo)
@@ -597,6 +603,7 @@ async def handle_voice(message: Message, state: FSMContext):
     """Handle voice messages with transcription"""
     user = message.from_user
     file_path = None
+    typing_task = None
 
     logger.info(f"Voice message received from user {user.id}")
 
@@ -843,6 +850,7 @@ async def handle_voice(message: Message, state: FSMContext):
             "Пожалуйста, попробуйте снова."
         )
     finally:
+        stop_typing(typing_task)  # ранние return (пустая расшифровка) не оставляют «печатает…»
         await flush_usage()
         if file_path and os.path.exists(file_path):
             os.remove(file_path)

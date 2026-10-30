@@ -51,4 +51,4 @@ def test_env_example_loads(Settings, monkeypatch, tmp_path):
     s = Settings(_env_file=example)
     assert s.ADMIN_IDS == [123456789, 987654321]
     assert s.KB_CHANNEL_IDS == []
-    assert s.APP_VERSION == "1.11.0"
+    assert s.APP_VERSION == "1.11.1"

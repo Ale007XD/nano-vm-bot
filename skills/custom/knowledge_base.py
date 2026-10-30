@@ -193,17 +193,24 @@ async def _extract_entities(text: str, title: str, llm_client) -> dict:
     try:
         from app.core.llm_client_v2 import Message
 
+        # gpt-oss «думает» внутри лимита max_tokens: при 600 токенах ответ мог остаться пустым.
+        # Низкий reasoning_effort + запас токенов + JSON-режим (на Groq; фолбэк-провайдеры его игнорируют)
         response = await llm_client.chat(
             messages=[
                 Message(role="system", content="Ты аналитик. Отвечай только JSON без markdown-оберток."),
                 Message(role="user", content=prompt),
             ],
-            max_tokens=600,
+            max_tokens=1500,
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
         )
-        raw = re.sub(r"```(?:json)?", "", response.content).strip()
+        raw = re.sub(r"```(?:json)?", "", response.content or "").strip()
         start, end = raw.find("{"), raw.rfind("}")
         if start == -1 or end == -1:
-            raise ValueError("в ответе LLM нет JSON-объекта")
+            raise ValueError(
+                f"в ответе LLM нет JSON-объекта (finish_reason={getattr(response, 'finish_reason', None)}, "
+                f"начало ответа: {raw[:120]!r})"
+            )
         return json.loads(raw[start:end + 1])
     except Exception as e:
         logger.warning(f"LLM extract failed: {e}")
@@ -326,16 +333,22 @@ async def _cmd_add(url: str, user_id: int, comment: str, llm_client) -> str:
     topics_str = _e(", ".join(entities.get("topics", [])[:3]))
     facts_str = "\n".join(f"• {_e(f)}" for f in key_facts[:3])
 
-    return (
-        f"✅ <b>Статья добавлена в базу знаний</b>\n\n"
-        f"📰 <b>{_e(title)}</b>\n"
-        f"🌐 {_e(source)}\n"
-        f"🆔 <code>{art_id}</code>\n\n"
-        f"📝 {_e(entities.get('summary',''))}\n\n"
-        f"🏷 {tags_str}\n"
-        f"📂 Темы: {topics_str}\n\n"
-        f"🔑 <b>Ключевые факты:</b>\n{facts_str}"
-    )
+    # пустые разделы (LLM-разбор не удался) не показываем
+    parts = [
+        "✅ <b>Статья добавлена в базу знаний</b>\n",
+        f"📰 <b>{_e(title)}</b>\n🌐 {_e(source)}\n🆔 <code>{art_id}</code>",
+    ]
+    summary = entities.get("summary", "")
+    if summary and summary != title:
+        parts.append(f"📝 {_e(summary)}")
+    meta = [x for x in (f"🏷 {tags_str}" if tags_str else "", f"📂 Темы: {topics_str}" if topics_str else "") if x]
+    if meta:
+        parts.append("\n".join(meta))
+    if facts_str:
+        parts.append(f"🔑 <b>Ключевые факты:</b>\n{facts_str}")
+    else:
+        parts.append("<i>Теги и факты не извлечены (LLM не вернул разбор) — статья сохранена и ищется по тексту.</i>")
+    return "\n\n".join(parts)
 
 
 async def _cmd_search(query: str, user_id: int) -> str:

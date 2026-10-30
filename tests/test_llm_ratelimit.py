@@ -107,9 +107,11 @@ class _Client:
     def __init__(self, content):
         self.content, self.messages = content, None
 
-    async def chat(self, messages, model=None, temperature=None, max_tokens=None, **kw):
+    async def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False,
+                   max_attempts=3, tools=None, response_format=None, reasoning_effort=None, **kw):
         assert not kw, f"неподдерживаемые аргументы: {kw}"
-        self.messages = messages
+        self.messages, self.max_tokens = messages, max_tokens
+        self.reasoning_effort, self.response_format = reasoning_effort, response_format
         return v2.LLMResponse(content=self.content, model="m", provider="groq")
 
 
@@ -122,6 +124,9 @@ class TestKnowledgeBaseExtract:
         out = await kb._extract_entities("текст", "Заголовок", cl)
         assert out["tags"] == ["a"] and out["summary"] == "кратко"
         assert [m.role for m in cl.messages] == ["system", "user"]
+        # рассуждающая модель не должна съедать весь лимит токенов до JSON
+        assert cl.reasoning_effort == "low" and cl.max_tokens >= 1000
+        assert cl.response_format == {"type": "json_object"}
 
     @pytest.mark.asyncio
     async def test_fenced_json(self, kb):
@@ -132,3 +137,25 @@ class TestKnowledgeBaseExtract:
     async def test_garbage_falls_back_to_title(self, kb):
         out = await kb._extract_entities("т", "Заголовок", _Client("не json"))
         assert out == {"summary": "Заголовок", "tags": [], "topics": [], "key_facts": []}
+
+
+class TestKnowledgeBaseReply:
+    def test_empty_sections_hidden_when_extract_failed(self, kb, monkeypatch, tmp_path):
+        monkeypatch.setattr(kb, "_DB_PATH", str(tmp_path / "kb.db"))
+
+        async def fetch(url):
+            return "Заголовок", "текст страницы " * 20
+
+        async def entities(text, title, llm):
+            return {"summary": title, "tags": [], "topics": [], "key_facts": []}
+
+        async def facts(f, title):
+            return f
+
+        monkeypatch.setattr(kb, "_fetch_page", fetch)
+        monkeypatch.setattr(kb, "_extract_entities", entities)
+        monkeypatch.setattr(kb, "_verify_facts", facts)
+        import asyncio
+        out = asyncio.run(kb._cmd_add("https://example.com/a", 1, "", None))
+        assert "Статья добавлена" in out and "не извлечены" in out
+        assert "Темы:" not in out and "Ключевые факты" not in out
