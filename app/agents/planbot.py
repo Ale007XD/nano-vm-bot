@@ -230,7 +230,7 @@ class PlanBotAgent:
     ]
 }}
 
-Держите шаги четкими и выполнимыми. Максимум 7 шагов."""
+Держите шаги четкими и выполнимыми. Максимум {self._max_steps()} шагов (объединяйте близкие действия)."""
         
         messages = [
             Message(role="system", content=self.SYSTEM_PROMPT),
@@ -243,14 +243,41 @@ class PlanBotAgent:
             reasoning_effort="medium"
         )
         
-        try:
-            plan_data = json.loads(response.content)
-            steps = [PlanStep(**step) for step in plan_data.get('steps', [])]
-        except (json.JSONDecodeError, TypeError):
+        steps = self._parse_steps(response.content, self._max_steps())
+        if not steps:
             # Fallback: create simple single-step plan
             steps = [PlanStep(number=1, description="Analyze and respond to the request")]
-        
+
         return ExecutionPlan(goal=goal, steps=steps)
+
+    @staticmethod
+    def _max_steps() -> int:
+        """Шагов выполнения при бюджете PLANBOT_MAX_CALLS: минус вызов плана и вызов итога."""
+        try:
+            budget = int(getattr(settings, "PLANBOT_MAX_CALLS", 4))
+        except (TypeError, ValueError):
+            budget = 4
+        return max(1, budget - 2)
+
+    @staticmethod
+    def _parse_steps(content: str, limit: int) -> List["PlanStep"]:
+        """Шаги из JSON-ответа модели (терпим ```json-обёртку), не больше limit."""
+        try:
+            raw = re.sub(r"```(?:json)?", "", content or "").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[start:end + 1])
+            steps = []
+            for i, item in enumerate(data.get("steps", []), start=1):
+                steps.append(PlanStep(
+                    number=int(item.get("number", i)),
+                    description=str(item["description"]),
+                ))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return []
+        steps = steps[:limit]
+        for i, st in enumerate(steps, start=1):
+            st.number = i  # нумерация без дыр после усечения
+        return steps
     
     async def _execute_step(
         self,

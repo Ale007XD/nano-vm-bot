@@ -108,3 +108,10 @@ def test_lint_accepts_good_prompts(me):
         "SHOWCASE_SYSTEM_PROMPT": '"Отвечай по блоку БАЗА ЗНАНИЙ"',
     }
     assert me.lint(good) == []
+
+
+def test_lint_embedding_model(me):
+    assert "all-MiniLM-L6-v2" in " ".join(me.lint({"EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2"}))
+    e5 = {"EMBEDDING_MODEL": "intfloat/multilingual-e5-large"}
+    assert "BOT_MEM_LIMIT" in " ".join(me.lint(e5))
+    assert not [w for w in me.lint({**e5, "BOT_MEM_LIMIT": "3500m", "SHOWCASE_MEM_LIMIT": "3500m"}) if "ОЗУ" in w]

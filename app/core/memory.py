@@ -3,6 +3,7 @@ Vector Memory System for RAG (Retrieval Augmented Generation)
 Uses ChromaDB for vector storage and fastembed for embeddings (multilingual)
 """
 import asyncio
+import contextlib
 import gc
 import hashlib
 import logging
@@ -19,9 +20,70 @@ from fastembed import TextEmbedding
 
 from app.core.config import settings
 
+try:  # межпроцессная блокировка перестройки индекса (бот и витрина делят один vector_store)
+    import fcntl
+except ImportError:  # не POSIX
+    fcntl = None
+
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+# Модель, которой до появления настройки EMBEDDING_MODEL были построены все коллекции.
+# Коллекции без отметки модели считаются построенными ею.
+LEGACY_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL = LEGACY_EMBEDDING_MODEL  # обратная совместимость импорта
+
+# E5-семейство обучено с префиксами: без них качество поиска заметно падает
+# (fastembed их сам не добавляет). Остальные модели префиксов не требуют.
+_MODEL_PREFIXES = (
+    ("intfloat/multilingual-e5", ("query: ", "passage: ")),
+    ("intfloat/e5", ("query: ", "passage: ")),
+)
+
+_MULTILINGUAL_HINTS = ("multilingual", "e5", "labse", "bge-m3", "jina-embeddings-v3")
+_REINDEX_SUFFIX = "__reindex"
+_REINDEX_BATCH = 256
+
+
+# Прежний «умолчательный» EMBEDDING_MODEL из .env.example: настройка тогда не читалась, а эта
+# модель английская — на русском ищет плохо. Не даём ей молча вступить в силу.
+_DEAD_ENGLISH_DEFAULT = "sentence-transformers/all-MiniLM-L6-v2"
+_warned_dead_default = False
+
+
+def _model_name() -> str:
+    """Модель эмбеддингов из настроек (EMBEDDING_MODEL)."""
+    global _warned_dead_default
+    val = getattr(settings, "EMBEDDING_MODEL", None)
+    if not (isinstance(val, str) and val.strip()):
+        return LEGACY_EMBEDDING_MODEL
+    val = val.strip()
+    if val == _DEAD_ENGLISH_DEFAULT:
+        if not _warned_dead_default:
+            _warned_dead_default = True
+            logger.warning(
+                f"EMBEDDING_MODEL={val} (устаревшее значение из старого .env.example, оно не "
+                f"применялось) игнорируется — используется {LEGACY_EMBEDDING_MODEL}. Задайте модель "
+                "явно, например intfloat/multilingual-e5-large"
+            )
+        return LEGACY_EMBEDDING_MODEL
+    return val
+
+
+def _cache_dir() -> Optional[str]:
+    """Каталог кэша модели (на томе — переживает пересоздание контейнера)."""
+    val = getattr(settings, "EMBEDDING_CACHE_DIR", None)
+    if isinstance(val, str) and val.strip():
+        os.makedirs(val, exist_ok=True)
+        return val
+    return None
+
+
+def _prefixes_for(model_name: str):
+    name = (model_name or "").lower()
+    for start, prefixes in _MODEL_PREFIXES:
+        if name.startswith(start):
+            return prefixes
+    return ("", "")
 
 
 def _trim_memory() -> None:
@@ -82,8 +144,10 @@ class VectorMemory:
         """Вернуть модель (загрузив при необходимости) и пометить занятой. Парный _release_model."""
         with self._model_lock:
             if self.embedding_model is None:
-                logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-                self.embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
+                name, cache = _model_name(), _cache_dir()
+                logger.info(f"Loading embedding model: {name}")
+                kwargs = {"cache_dir": cache} if cache else {}
+                self.embedding_model = TextEmbedding(model_name=name, **kwargs)
             self._model_busy += 1
             self._model_last_used = time.monotonic()
             return self.embedding_model
@@ -115,11 +179,16 @@ class VectorMemory:
             except Exception as e:  # выгрузка — оптимизация, не должна ронять цикл
                 logger.warning(f"Embedding unload failed: {e}")
 
-    def embed_texts_sync(self, texts: List[str]) -> List[List[float]]:
-        """Пакетные эмбеддинги общей моделью (для навыков; синхронно)."""
+    def embed_texts_sync(self, texts: List[str], kind: str = "query") -> List[List[float]]:
+        """Пакетные эмбеддинги общей моделью (для навыков; синхронно).
+
+        kind: "query" | "passage" — для моделей с префиксами (E5). Симметричное сравнение
+        текстов между собой по рекомендации E5 идёт с «query: ».
+        """
         model = self._acquire_model()
         try:
-            return [vec.tolist() for vec in model.embed(texts)]
+            prefix = _prefixes_for(_model_name())[0 if kind == "query" else 1]
+            return [vec.tolist() for vec in model.embed([prefix + t for t in texts])]
         finally:
             self._release_model()
 
@@ -152,26 +221,21 @@ class VectorMemory:
                 )
             )
 
-            self.collections['memories'] = await asyncio.to_thread(
-                self.chroma_client.get_or_create_collection,
-                name="memories",
-                metadata={"description": "User memories and notes"}
-            )
-            self.collections['skills'] = await asyncio.to_thread(
-                self.chroma_client.get_or_create_collection,
-                name="skills",
-                metadata={"description": "Skills documentation and code"}
-            )
-            self.collections['conversations'] = await asyncio.to_thread(
-                self.chroma_client.get_or_create_collection,
-                name="conversations",
-                metadata={"description": "Important conversation fragments"}
-            )
-            self.collections['corpus'] = await asyncio.to_thread(
-                self.chroma_client.get_or_create_collection,
-                name="corpus",
-                metadata={"description": "Showcase support knowledge corpus"}
-            )
+            logger.info(f"Embedding model: {_model_name()}")
+            if not any(h in _model_name().lower() for h in _MULTILINGUAL_HINTS):
+                logger.warning(
+                    f"EMBEDDING_MODEL={_model_name()} не похожа на многоязычную: русский текст "
+                    "будет искаться плохо. Рекомендуется intfloat/multilingual-e5-large "
+                    "или sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+                )
+
+            for key, description in (
+                ("memories", "User memories and notes"),
+                ("skills", "Skills documentation and code"),
+                ("conversations", "Important conversation fragments"),
+                ("corpus", "Showcase support knowledge corpus"),
+            ):
+                self.collections[key] = await self._open_collection(key, description)
 
             self._initialized = True
             logger.info("Vector memory initialized successfully")
@@ -180,19 +244,165 @@ class VectorMemory:
             logger.error(f"Failed to initialize vector memory: {e}")
             raise
 
+    # --- модель коллекций и перестройка индекса ---------------------------
+    async def _open_collection(self, name: str, description: str):
+        """Открыть коллекцию и привести её векторы к текущей EMBEDDING_MODEL."""
+        col = await asyncio.to_thread(
+            self.chroma_client.get_or_create_collection,
+            name=name,
+            metadata={"description": description},
+        )
+        try:
+            return await self._ensure_collection_model(col, name, description)
+        except Exception as e:  # не роняем бота: поиск вернёт пусто, в логе — причина
+            logger.error(
+                f"Не удалось привести коллекцию «{name}» к модели {_model_name()}: {e}. "
+                "Поиск по ней может работать неверно до успешной перестройки (перезапустите бота)"
+            )
+            return col
+
+    async def _ensure_collection_model(self, col, name: str, description: str):
+        target = _model_name()
+        md = getattr(col, "metadata", None)
+        if not isinstance(md, dict):
+            md = {}
+        stamped = md.get("embedding_model")
+        if stamped == target:
+            return col
+        if stamped is None and LEGACY_EMBEDDING_MODEL == target:
+            # коллекция построена прежней (зашитой) моделью — только ставим отметку
+            await asyncio.to_thread(col.modify, metadata={**md, "embedding_model": target})
+            return col
+        count = await asyncio.to_thread(col.count)
+        if not isinstance(count, int):
+            return col
+        if count == 0 and stamped is None:
+            # новая пустая коллекция — просто помечаем моделью
+            await asyncio.to_thread(col.modify, metadata={**md, "embedding_model": target})
+            return col
+        return await self._reindex_collection(name, description, target)
+
+    @contextlib.asynccontextmanager
+    async def _reindex_guard(self):
+        """Один перестраивает — остальные ждут (в процессе и между контейнерами бота и витрины)."""
+        if not hasattr(self, "_reindex_alock"):
+            self._reindex_alock = asyncio.Lock()
+        async with self._reindex_alock:
+            fd = None
+            if fcntl is not None:
+                try:
+                    os.makedirs(settings.VECTOR_STORE_PATH, exist_ok=True)
+                    fd = os.open(os.path.join(settings.VECTOR_STORE_PATH, ".reindex.lock"),
+                                 os.O_CREAT | os.O_RDWR)
+                    await asyncio.to_thread(fcntl.flock, fd, fcntl.LOCK_EX)
+                except OSError as e:
+                    logger.warning(f"Не удалось взять блокировку перестройки: {e}")
+            try:
+                yield
+            finally:
+                if fd is not None:
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+
+    async def _reindex_collection(self, name: str, description: str, target: str):
+        """Пересчитать векторы коллекции моделью target из сохранённых текстов.
+
+        Новая коллекция строится под временным именем и подменяет старую только после полного
+        заполнения: при сбое данные не теряются (остаётся старая коллекция либо готовая копия).
+        """
+        client = self.chroma_client
+        tmp_name = name + _REINDEX_SUFFIX
+        async with self._reindex_guard():
+            existing = {c if isinstance(c, str) else c.name
+                        for c in await asyncio.to_thread(client.list_collections)}
+
+            # восстановление после прерванной подмены: старой нет, а готовая копия есть
+            if name not in existing and tmp_name in existing:
+                tmp = await asyncio.to_thread(client.get_collection, tmp_name)
+                await asyncio.to_thread(tmp.modify, name=name)
+                logger.warning(f"Коллекция «{name}» восстановлена из копии перестройки")
+                return await asyncio.to_thread(client.get_collection, name)
+
+            col = await asyncio.to_thread(client.get_collection, name)
+            md = col.metadata if isinstance(col.metadata, dict) else {}
+            if md.get("embedding_model") == target:  # другой процесс уже перестроил
+                return col
+            old_model = md.get("embedding_model") or LEGACY_EMBEDDING_MODEL
+            if tmp_name in existing:  # недоделанная прошлая попытка
+                await asyncio.to_thread(client.delete_collection, tmp_name)
+
+            ids: List[str] = []
+            docs: List[str] = []
+            metas: List[Dict[str, Any]] = []
+            offset = 0
+            while True:
+                part = await asyncio.to_thread(
+                    col.get, include=["documents", "metadatas"], limit=_REINDEX_BATCH, offset=offset
+                )
+                got = part.get("ids") or []
+                if not got:
+                    break
+                ids += got
+                docs += part.get("documents") or [""] * len(got)
+                metas += part.get("metadatas") or [{}] * len(got)
+                offset += len(got)
+
+            logger.warning(
+                f"Перестройка индекса «{name}»: {old_model} → {target}, записей: {len(ids)}"
+                + (" (может занять минуты)" if len(ids) > 50 else "")
+            )
+            started = time.monotonic()
+            vectors = await asyncio.to_thread(self._embed_many, docs, "passage") if ids else []
+
+            new_md = {**md, "description": md.get("description", description), "embedding_model": target}
+            tmp = await asyncio.to_thread(client.create_collection, name=tmp_name, metadata=new_md)
+            for i in range(0, len(ids), _REINDEX_BATCH):
+                sl = slice(i, i + _REINDEX_BATCH)
+                await asyncio.to_thread(
+                    tmp.add, ids=ids[sl], embeddings=vectors[sl], documents=docs[sl],
+                    metadatas=[m or None for m in metas[sl]],
+                )
+            await asyncio.to_thread(client.delete_collection, name)
+            await asyncio.to_thread(tmp.modify, name=name)
+            logger.warning(
+                f"Индекс «{name}» перестроен за {time.monotonic() - started:.0f} с, записей: {len(ids)}"
+            )
+            return await asyncio.to_thread(client.get_collection, name)
+
     def _generate_id(self, content: str, user_id: Optional[int] = None) -> str:
         """Generate unique ID for document"""
         data = f"{user_id}:{content}" if user_id else content
         return hashlib.md5(data.encode()).hexdigest()
 
-    def _embed_text(self, text: str) -> List[float]:
-        """Generate embedding for text using fastembed"""
+    def _embed_text(self, text: str, kind: str = "passage") -> List[float]:
+        """Generate embedding for text using fastembed.
+
+        kind="query" — поисковый запрос, "passage" — сохраняемый документ (важно для E5-префиксов).
+        """
         model = self._acquire_model()
         try:
-            embeddings = list(model.embed([text]))
+            prefix = _prefixes_for(_model_name())[0 if kind == "query" else 1]
+            embeddings = list(model.embed([prefix + text]))
         finally:
             self._release_model()
         return embeddings[0].tolist()
+
+    def _embed_many(self, texts: List[str], kind: str = "passage") -> List[List[float]]:
+        """Эмбеддинги пачками (для перестройки индекса); модель держится занятой на всё время."""
+        model = self._acquire_model()
+        try:
+            prefix = _prefixes_for(_model_name())[0 if kind == "query" else 1]
+            out: List[List[float]] = []
+            step = 16
+            for i in range(0, len(texts), step):
+                batch = [prefix + t for t in texts[i:i + step]]
+                out.extend(vec.tolist() for vec in model.embed(batch))
+                if len(texts) > step and (i // step) % 10 == 9:
+                    logger.info(f"Перестройка индекса: {min(i + step, len(texts))}/{len(texts)}")
+            return out
+        finally:
+            self._release_model()
 
     async def add_memory(
         self,
@@ -241,7 +451,7 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = await asyncio.to_thread(self._embed_text, query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query, "query")
 
             where_filter = {"user_id": user_id}
             if memory_type:
@@ -319,7 +529,7 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = await asyncio.to_thread(self._embed_text, query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query, "query")
 
             results = await asyncio.to_thread(
                 self.collections['skills'].query,
@@ -407,7 +617,7 @@ class VectorMemory:
         await self.initialize()
 
         try:
-            query_embedding = await asyncio.to_thread(self._embed_text, query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query, "query")
 
             results = await asyncio.to_thread(
                 self.collections['conversations'].query,
@@ -493,11 +703,7 @@ class VectorMemory:
         await self.initialize()
         col = self.collections.get(corpus)
         if col is None:
-            col = await asyncio.to_thread(
-                self.chroma_client.get_or_create_collection,
-                name=corpus,
-                metadata={"description": f"Showcase knowledge corpus: {corpus}"},
-            )
+            col = await self._open_collection(corpus, f"Showcase knowledge corpus: {corpus}")
             self.collections[corpus] = col
         return col
 
@@ -580,7 +786,7 @@ class VectorMemory:
         n_results = n_results or settings.CORPUS_TOP_K
 
         try:
-            query_embedding = await asyncio.to_thread(self._embed_text, query)
+            query_embedding = await asyncio.to_thread(self._embed_text, query, "query")
 
             results = await asyncio.to_thread(
                 collection.query,

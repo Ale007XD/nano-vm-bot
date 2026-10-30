@@ -195,6 +195,11 @@ class TestContext:
 class FakeCollection:
     def __init__(self):
         self.docs = {}
+        self.metadata = {}
+
+    def modify(self, metadata=None, name=None):
+        if metadata is not None:
+            self.metadata = dict(metadata)
 
     def add(self, ids, embeddings, documents, metadatas):
         for i, d, m in zip(ids, documents, metadatas):
@@ -233,7 +238,7 @@ def memory(monkeypatch):
     vm._initialized = True
     vm.chroma_client = FakeChroma()
     vm.collections = {"corpus": vm.chroma_client.get_or_create_collection("corpus")}
-    monkeypatch.setattr(VectorMemory, "_embed_text", lambda self, t: [0.1, 0.2])
+    monkeypatch.setattr(VectorMemory, "_embed_text", lambda self, t, kind="passage": [0.1, 0.2])
     st = sys.modules["app.core.config"].settings
     monkeypatch.setattr(st, "CORPUS_CHUNK_SIZE", 1200)
     monkeypatch.setattr(st, "CORPUS_CHUNK_OVERLAP", 200)

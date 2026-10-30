@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.10.2 · **Тесты:** 677 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.11.0 · **Тесты:** 704 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -196,7 +196,9 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `ENABLE_WEB_SEARCH` | — | `true` | Веб-поиск в FastBot/PlanBot и навыках |
 | `SERPER_API_KEY` / `SERPAPI_KEY` / `BING_API_KEY` | — | — | Ключи поисковых API (рекомендуется Serper); без ключей — бесплатный DuckDuckGo |
 | `WEB_SEARCH_RESULTS` | — | `3` | Результатов поиска на запрос |
-| `EMBEDDING_MODEL` | — | `sentence-transformers/all-MiniLM-L6-v2` | Модель эмбеддингов (fastembed). Для русского лучше `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`; после смены модели векторное хранилище нужно переиндексировать |
+| `EMBEDDING_MODEL` | — | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Модель эмбеддингов (fastembed). Для лучшего поиска по-русски — `intfloat/multilingual-e5-large` (~3 ГБ ОЗУ на процесс; поднимите `BOT_MEM_LIMIT`/`SHOWCASE_MEM_LIMIT`). При смене индексы перестраиваются автоматически при запуске из сохранённых текстов (минуты); бота и витрину перезапускайте вместе |
+| `EMBEDDING_CACHE_DIR` | — | `data/models` | Кэш модели на томе `data` (не скачивается заново при пересоздании контейнера). Токен HuggingFace — переменная `HF_TOKEN` |
+| `PLANBOT_MAX_CALLS` | — | `4` | Бюджет LLM-вызовов PlanBot (план + шаги + итог): 4 — до 2 шагов, влезает в бесплатный лимит Groq; 7 — расширенный режим |
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто и нет `SHOWCASES` — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель витрин по умолчанию (поле `model` витрины переопределяет) |
 | `SHOWCASE_SYSTEM_PROMPT` | — | вшитый | Системный промпт витрин по умолчанию (поле `system_prompt` витрины переопределяет) |

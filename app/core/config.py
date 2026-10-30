@@ -384,8 +384,17 @@ class Settings(BaseSettings):
         ),
     )
     EMBEDDING_MODEL: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Model for text embeddings"
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        description=(
+            "Модель эмбеддингов fastembed. Для русского: paraphrase-multilingual-MiniLM-L12-v2 "
+            "(по умолчанию, ~0,5 ГБ ОЗУ, видит первые 128 токенов), paraphrase-multilingual-mpnet-base-v2 "
+            "(~1,3 ГБ), intfloat/multilingual-e5-large (лучшее качество, ~3 ГБ). "
+            "При смене индексы перестраиваются автоматически при запуске"
+        ),
+    )
+    EMBEDDING_CACHE_DIR: str = Field(
+        default="data/models",
+        description="Каталог кэша модели эмбеддингов (на томе data — не скачивается заново при пересоздании контейнера)"
     )
     
     # LLM Configuration (OpenRouter) - используется как fallback
@@ -470,6 +479,14 @@ class Settings(BaseSettings):
         default="openai/gpt-oss-120b",
         description="Model for PlanBot (DAG planning/verification)"
     )
+    PLANBOT_MAX_CALLS: int = Field(
+        default=4, ge=3, le=12,
+        description=(
+            "Бюджет LLM-вызовов PlanBot на одно планирование: план (1) + шаги + итог (1). "
+            "4 — до 2 шагов, укладывается в бесплатный лимит Groq (8000 токенов/мин); "
+            "7 — расширенный режим (до 5 шагов) для платного тарифа или другого провайдера"
+        ),
+    )
 
     # Agent System Prompts (переопределяются в .env без пересборки)
     FASTBOT_SYSTEM_PROMPT: str = Field(
@@ -531,7 +548,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.10.2", description="Application version")
+    APP_VERSION: str = Field(default="1.11.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

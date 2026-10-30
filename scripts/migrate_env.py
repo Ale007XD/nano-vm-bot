@@ -120,6 +120,18 @@ def lint(old):
             "«из головы» — этот промпт. Добавьте правило «отвечай строго по блоку БАЗА ЗНАНИЙ; "
             "если ответа там нет — так и скажи»."
         )
+    emb = old.get("EMBEDDING_MODEL", "").strip("\"'")
+    if emb == "sentence-transformers/all-MiniLM-L6-v2":
+        warns.append(
+            "EMBEDDING_MODEL=all-MiniLM-L6-v2 — устаревшее значение из старого шаблона (оно не читалось, "
+            "модель английская): теперь игнорируется. Для русского задайте "
+            "intfloat/multilingual-e5-large (~3 ГБ ОЗУ) или оставьте paraphrase-multilingual-MiniLM-L12-v2"
+        )
+    if emb.startswith("intfloat/multilingual-e5-large") and not (old.get("BOT_MEM_LIMIT") and old.get("SHOWCASE_MEM_LIMIT")):
+        warns.append(
+            "EMBEDDING_MODEL=multilingual-e5-large требует ~3 ГБ ОЗУ на процесс, а потолок контейнеров по "
+            "умолчанию 1280m — задайте BOT_MEM_LIMIT и SHOWCASE_MEM_LIMIT (например 3500m), проверьте `free -h`"
+        )
     if old.get("BYOK_ENABLED", "").lower() == "true" and not old.get("ENCRYPTION_KEY", "").strip("\"'"):
         warns.append("BYOK_ENABLED=true, но ENCRYPTION_KEY пуст — /byok и /providers не заработают")
     if (old.get("SHOWCASE_BOT_TOKEN", "") and not old.get("SHOWCASES", "").strip("\"'")
