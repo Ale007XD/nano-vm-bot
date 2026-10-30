@@ -264,6 +264,22 @@ class Settings(BaseSettings):
     CORPUS_CHUNK_OVERLAP: int = Field(
         default=80, description="Максимальное наложение соседних чанков корпуса (символы)"
     )
+    CORPUS_ZIP_MAX_ARCHIVE_BYTES: int = Field(
+        default=20 * 1024 * 1024, ge=1024,
+        description="Макс. размер ZIP-архива корпуса (байты). Telegram отдаёт боту файлы до 20 МБ"
+    )
+    CORPUS_ZIP_MAX_TOTAL_BYTES: int = Field(
+        default=30 * 1024 * 1024, ge=1024,
+        description="Макс. суммарный размер распакованных документов архива (защита от zip-бомбы)"
+    )
+    CORPUS_ZIP_MAX_FILE_BYTES: int = Field(
+        default=1024 * 1024, ge=1024,
+        description="Макс. размер одного документа в архиве (байты); больший пропускается"
+    )
+    CORPUS_ZIP_MAX_FILES: int = Field(
+        default=500, ge=1,
+        description="Макс. число документов (.md/.txt) в одном архиве"
+    )
     CORPUS_TOP_K: int = Field(
         default=8, description="Сколько чанков корпуса подавать в контекст ответа (чанки короче — берём больше)"
     )
@@ -553,7 +569,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.12.0", description="Application version")
+    APP_VERSION: str = Field(default="1.13.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

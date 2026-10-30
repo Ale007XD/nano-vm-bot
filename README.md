@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.12.0 · **Тесты:** 743 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.13.0 · **Тесты:** 771 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -205,6 +205,7 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `CORPUS_CHUNK_SIZE` | — | `450` | Размер чанка корпуса (символы): под окно 128 токенов модели по умолчанию; для моделей с окном 512 — `1200` |
 | `CORPUS_CHUNK_OVERLAP` | — | `80` | Наложение соседних чанков (символы) |
 | `CORPUS_TOP_K` | — | `8` | Чанков в контексте ответа (чанки короче — берём больше) |
+| `CORPUS_ZIP_MAX_ARCHIVE_BYTES` / `_TOTAL_BYTES` / `_FILE_BYTES` / `_FILES` | — | 20 МБ / 30 МБ / 1 МБ / 500 | Лимиты пакетной загрузки корпуса из .zip: размер архива, суммарный распакованный размер, размер одного документа, число документов |
 | `BOT_TIMEZONE` | — | `Europe/Moscow` | Зона времени в ответах и планировщике |
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |

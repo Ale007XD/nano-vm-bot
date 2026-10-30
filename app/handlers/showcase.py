@@ -1,10 +1,12 @@
 """
 Showcase handlers — demo bot for clients, answers strictly from corpus.
 """
+import asyncio
 import html
 import logging
 import os
 import re
+from typing import Optional, Tuple
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
@@ -145,7 +147,7 @@ async def cmd_help(message: Message):
     )
     if is_admin(message.from_user.id):
         text += (
-            "\n\nАдминистратору: /corpus_stats, /corpus_upload, /corpus_delete, "
+            "\n\nАдминистратору: /corpus_stats, /corpus_upload (.md/.txt/.zip), /corpus_delete, "
             "/invite, /invites, /revoke_invite, /allow, /deny, /members"
         )
     await message.answer(text)
@@ -210,8 +212,13 @@ async def cmd_corpus_upload(message: Message):
         return
 
     await message.answer(
-        "📎 Пришлите документ (.md или .txt) — я добавлю его в базу знаний "
-        "витрины. Документ будет разбит на чанки и проиндексирован для поиска."
+        "📎 Пришлите документ (.md или .txt) — я добавлю его в базу знаний витрины, разбив на чанки.\n"
+        "Повторная загрузка файла с тем же именем заменяет прежнюю версию.\n\n"
+        "📦 Пакетная загрузка: пришлите <b>.zip</b> с документами (пути внутри архива становятся именами). "
+        "Подпись к архиву:\n"
+        "• <code>dry</code> — только проверить, что будет добавлено, обновлено и удалено;\n"
+        "• <code>sync</code> — ещё и удалить из корпуса документы, которых нет в архиве.\n"
+        "Неизменившиеся документы пропускаются."
     )
 
 
@@ -227,9 +234,13 @@ async def handle_document(message: Message):
     doc: Document = message.document
     file_name = (doc.file_name or "").lower()
 
+    if file_name.endswith(".zip"):
+        await _handle_corpus_zip(message, doc)
+        return
+
     if not file_name.endswith((".md", ".txt")):
         await message.answer(
-            "❌ Поддерживаются только файлы .md и .txt."
+            "❌ Поддерживаются файлы .md, .txt и .zip (пакет документов)."
         )
         return
 
@@ -278,6 +289,82 @@ async def handle_document(message: Message):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+def _zip_flags(caption: Optional[str]) -> Tuple[bool, bool]:
+    """(dry, sync) из подписи к архиву."""
+    words = set(re.findall(r"[\w-]+", (caption or "").lower()))
+    dry = bool(words & {"dry", "dry-run", "dryrun", "проверка", "проверить"})
+    sync = bool(words & {"sync", "синхронизация", "синхр", "синхронизировать"})
+    return dry, sync
+
+
+async def _handle_corpus_zip(message: Message, doc: Document) -> None:
+    """Пакетная загрузка документов корпуса из .zip (dry / sync — в подписи)."""
+    from app.core import corpus_import
+    from app.utils.corpus_archive import ArchiveError, scan_archive
+
+    limit = settings.CORPUS_ZIP_MAX_ARCHIVE_BYTES
+    if doc.file_size and doc.file_size > limit:
+        await message.answer(f"❌ Архив больше {limit // (1024 * 1024)} МБ. Разбейте его на части.")
+        return
+
+    corpus = current_showcase().collection
+    lock = corpus_import.import_lock(corpus)
+    if lock.locked():
+        await message.answer("⏳ Импорт в этот корпус уже идёт — дождитесь окончания.")
+        return
+
+    dry, sync = _zip_flags(message.caption)
+    processing_msg = await message.answer("📥 Читаю архив…")
+    temp_path = f"/tmp/showcase_corpus_zip_{message.from_user.id}_{doc.file_id}"
+
+    async with lock:
+        try:
+            file = await message.bot.get_file(doc.file_id)
+            await message.bot.download_file(file.file_path, temp_path)
+            with open(temp_path, "rb") as fh:
+                data = fh.read(limit + 1)
+            if len(data) > limit:
+                await processing_msg.edit_text(f"❌ Архив больше {limit // (1024 * 1024)} МБ.")
+                return
+
+            scan = await asyncio.to_thread(
+                scan_archive,
+                data,
+                max_files=settings.CORPUS_ZIP_MAX_FILES,
+                max_file_bytes=settings.CORPUS_ZIP_MAX_FILE_BYTES,
+                max_total_bytes=settings.CORPUS_ZIP_MAX_TOTAL_BYTES,
+            )
+            plan = await corpus_import.plan_import(scan, corpus, sync=sync)
+
+            if dry:
+                await processing_msg.edit_text(corpus_import.format_plan(plan, scan))
+                return
+
+            todo = len(plan.add) + len(plan.update)
+            if not todo and not plan.remove:
+                await processing_msg.edit_text(corpus_import.format_report(
+                    corpus_import.ImportReport(), plan, scan))
+                return
+
+            async def progress(done: int, total: int, name: str) -> None:
+                await processing_msg.edit_text(
+                    f"⏳ Индексирую: {done}/{total}\n<code>{html.escape(name)}</code>"
+                )
+
+            await processing_msg.edit_text(f"⏳ Индексирую документов: {todo}…")
+            report = await corpus_import.apply_import(plan, corpus, progress=progress)
+            await processing_msg.edit_text(corpus_import.format_report(report, plan, scan))
+
+        except ArchiveError as e:
+            await processing_msg.edit_text(f"❌ Архив отклонён: {html.escape(str(e))}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error importing corpus archive: {e}", exc_info=True)
+            await processing_msg.edit_text("❌ Ошибка импорта архива. Подробности — в логе.")
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
 # ----------------------------- доступ: команды администратора ------------ #

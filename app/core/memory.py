@@ -742,6 +742,7 @@ class VectorMemory:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         corpus: str = DEFAULT_CORPUS,
+        content_hash: Optional[str] = None,
     ) -> str:
         """Add a document to the showcase knowledge corpus.
 
@@ -766,14 +767,14 @@ class VectorMemory:
             metadatas = []
 
             now = datetime.now().isoformat()
+            # все чанки документа — одним переходом в поток (а не по одному)
+            embeddings = await asyncio.to_thread(lambda: [self._embed_text(c) for c in chunks])
             for idx, chunk in enumerate(chunks):
                 doc_id = hashlib.md5(
                     f"{source_id}:{idx}:{chunk[:80]}".encode()
                 ).hexdigest()
-                embedding = await asyncio.to_thread(self._embed_text, chunk)
 
                 ids.append(doc_id)
-                embeddings.append(embedding)
                 documents.append(chunk)
                 metadatas.append(_sanitize_metadata({
                     "source_id": source_id,
@@ -782,6 +783,7 @@ class VectorMemory:
                     "chunk_index": idx,
                     "chunk_count": len(chunks),
                     "added_at": now,
+                    "content_hash": content_hash or "",
                 }))
 
             await asyncio.to_thread(
@@ -859,6 +861,31 @@ class VectorMemory:
         except Exception as e:
             logger.error(f"Failed to delete corpus documents named {source_name!r}: {e}")
             return 0
+
+    async def get_corpus_index(self, corpus: str = DEFAULT_CORPUS, limit: int = 50000) -> Dict[str, Dict[str, Any]]:
+        """Имя документа -> {chunks, source_ids, hashes}: для сверки корпуса с архивом."""
+        collection = await self.ensure_corpus(corpus)
+        index: Dict[str, Dict[str, Any]] = {}
+        try:
+            offset = 0
+            while offset < limit:
+                part = await asyncio.to_thread(
+                    collection.get, include=["metadatas"], limit=min(1000, limit - offset), offset=offset
+                )
+                ids = part.get("ids")
+                if not isinstance(ids, list) or not ids:
+                    break
+                for meta in part.get("metadatas") or []:
+                    meta = meta or {}
+                    name = meta.get("source_name") or "без названия"
+                    entry = index.setdefault(name, {"chunks": 0, "source_ids": set(), "hashes": set()})
+                    entry["chunks"] += 1
+                    entry["source_ids"].add(meta.get("source_id", ""))
+                    entry["hashes"].add(meta.get("content_hash", ""))
+                offset += len(ids)
+        except Exception as e:
+            logger.error(f"Failed to index corpus: {e}")
+        return index
 
     async def get_corpus_sources(self, corpus: str = DEFAULT_CORPUS, limit: int = 5000) -> List[Dict[str, Any]]:
         """Документы корпуса: имя, число чанков, средняя длина чанка (до limit чанков)."""
