@@ -43,6 +43,7 @@ _CLIENT_COMMANDS = [
 _ADMIN_COMMANDS = _CLIENT_COMMANDS + [
     BotCommand(command="corpus_stats", description="Статистика корпуса"),
     BotCommand(command="corpus_upload", description="Загрузить документ"),
+    BotCommand(command="corpus_delete", description="Удалить документ"),
     BotCommand(command="invite", description="Создать приглашение"),
     BotCommand(command="invites", description="Действующие приглашения"),
     BotCommand(command="allow", description="Выдать доступ по ID"),

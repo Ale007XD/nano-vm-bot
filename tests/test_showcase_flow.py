@@ -511,11 +511,18 @@ class TestCorpusAdmin:
         add = AsyncMock()
         monkeypatch.setattr(sc.vector_memory, "get_corpus_stats", stats)
         monkeypatch.setattr(sc.vector_memory, "add_corpus_document", add)
+        sources = AsyncMock(return_value=[{"name": "faq.md", "chunks": 4, "avg_chars": 310}])
+        delete_by_name = AsyncMock(return_value=0)
+        monkeypatch.setattr(sc.vector_memory, "get_corpus_sources", sources)
+        monkeypatch.setattr(sc.vector_memory, "delete_corpus_by_name", delete_by_name)
         monkeypatch.setattr(sc.settings, "MAX_SKILL_FILE_SIZE", 10**6, raising=False)
 
+        stats_msg = msg(ADMIN)
         with showcases.use_showcase(B):
-            await sc.cmd_corpus_stats(msg(ADMIN))
+            await sc.cmd_corpus_stats(stats_msg)
         assert stats.await_args.kwargs["corpus"] == "corpus_jurist"
+        assert sources.await_args.kwargs["corpus"] == "corpus_jurist"
+        assert "faq.md" in said(stats_msg) and "310" in said(stats_msg)
 
         async def download(path, dest):
             with open(dest, "w", encoding="utf-8") as fh:
@@ -530,3 +537,7 @@ class TestCorpusAdmin:
             with showcases.use_showcase(showcase):
                 await sc.handle_document(m)
             assert add.await_args.kwargs["corpus"] == expected
+            # прежняя версия файла с тем же именем заменяется, а только что добавленная — нет
+            assert delete_by_name.await_args.args[0] == "faq.md"
+            assert delete_by_name.await_args.kwargs["corpus"] == expected
+            assert delete_by_name.await_args.kwargs["keep_source_id"] == add.await_args.kwargs["source_id"]

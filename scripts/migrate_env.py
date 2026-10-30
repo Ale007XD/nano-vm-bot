@@ -132,6 +132,13 @@ def lint(old):
             "EMBEDDING_MODEL=multilingual-e5-large требует ~3 ГБ ОЗУ на процесс, а потолок контейнеров по "
             "умолчанию 1280m — задайте BOT_MEM_LIMIT и SHOWCASE_MEM_LIMIT (например 3500m), проверьте `free -h`"
         )
+    chunk = old.get("CORPUS_CHUNK_SIZE", "").strip("\"'")
+    if chunk.isdigit() and int(chunk) > 600 and (not emb or "MiniLM" in emb):
+        warns.append(
+            f"CORPUS_CHUNK_SIZE={chunk}: модель эмбеддингов (MiniLM-L12) видит только первые 128 токенов "
+            "(~400–500 символов), остальная часть каждого чанка не участвует в поиске. Поставьте 450 "
+            "(CORPUS_CHUNK_OVERLAP=80, CORPUS_TOP_K=8) и перезагрузите документы"
+        )
     if old.get("BYOK_ENABLED", "").lower() == "true" and not old.get("ENCRYPTION_KEY", "").strip("\"'"):
         warns.append("BYOK_ENABLED=true, но ENCRYPTION_KEY пуст — /byok и /providers не заработают")
     if (old.get("SHOWCASE_BOT_TOKEN", "") and not old.get("SHOWCASES", "").strip("\"'")

@@ -45,7 +45,7 @@ _COPYABLE = {
 _CLIENT_OWN_COMMANDS = {
     "start", "help", "operator", "endchat",
     "invite", "invites", "revoke_invite", "allow", "deny", "members",
-    "corpus_stats", "corpus_upload",
+    "corpus_stats", "corpus_upload", "corpus_delete",
 }
 
 

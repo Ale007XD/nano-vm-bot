@@ -648,49 +648,75 @@ class VectorMemory:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _split_units(text: str, limit: int) -> List[str]:
+        """Текст → «единицы» не длиннее limit: строки, предложения, затем группы слов.
+
+        Режет по границам слов; посимвольно — только одно «слово» длиннее limit (например, URL).
+        """
+        units: List[str] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            for sentence in re.split(r'(?<=[.!?…])\s+', line):
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                if len(sentence) <= limit:
+                    units.append(sentence)
+                    continue
+                piece = ""
+                for word in sentence.split():
+                    if len(word) > limit:  # «слово» длиннее лимита — режем посимвольно
+                        if piece:
+                            units.append(piece)
+                            piece = ""
+                        units.extend(word[i:i + limit] for i in range(0, len(word), limit))
+                    elif piece and len(piece) + 1 + len(word) > limit:
+                        units.append(piece)
+                        piece = word
+                    else:
+                        piece = f"{piece} {word}" if piece else word
+                if piece:
+                    units.append(piece)
+        return units
+
+    @staticmethod
     def _chunk_text(
         text: str,
         chunk_size: int,
         overlap: int
     ) -> List[str]:
-        """Split text into overlapping chunks on sentence boundaries.
+        """Split text into overlapping chunks on line/sentence/word boundaries.
 
-        A single sentence longer than chunk_size is hard-split by characters so
-        every returned chunk is guaranteed to be <= chunk_size characters.
+        Every returned chunk is guaranteed to be <= chunk_size characters. Текст режется по
+        строкам (заголовки и пункты списков без точки не склеиваются в одно «предложение»),
+        затем по предложениям, затем по границам слов. overlap — максимум символов,
+        повторяемых из конца предыдущего чанка в начале следующего.
         """
         text = text.strip()
         if not text or chunk_size <= 0:
             return []
 
-        sentences = re.split(r'(?<=[.!?…])\s+', text)
         chunks: List[str] = []
         current = ""
 
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-
-            # Одно предложение длиннее лимита — режем посимвольно.
-            if len(sentence) > chunk_size:
-                if current:
-                    chunks.append(current.strip())
-                    current = ""
-                for i in range(0, len(sentence), chunk_size):
-                    chunks.append(sentence[i:i + chunk_size])
-                continue
-
-            if current and len(current) + 1 + len(sentence) > chunk_size:
+        for unit in VectorMemory._split_units(text, chunk_size):
+            if current and len(current) + 1 + len(unit) > chunk_size:
                 chunks.append(current.strip())
-                # Начало следующего чанка — наложение из конца текущего.
-                words = current.split()
-                keep = max(0, overlap // 8)
-                if keep:
-                    current = " ".join(words[-keep:]) + " " + sentence
-                else:
-                    current = sentence
+                # Начало следующего чанка — наложение из конца текущего (в пределах overlap
+                # символов и так, чтобы чанк с новой единицей не превысил chunk_size).
+                tail: List[str] = []
+                used = 0
+                room = min(max(0, overlap), chunk_size - len(unit) - 1)
+                for w in reversed(current.split()):
+                    if used + len(w) + (1 if tail else 0) > room:
+                        break
+                    tail.insert(0, w)
+                    used += len(w) + (1 if len(tail) > 1 else 0)
+                current = (" ".join(tail) + " " + unit) if tail else unit
             else:
-                current = (current + " " + sentence).strip() if current else sentence
+                current = f"{current} {unit}" if current else unit
 
         if current.strip():
             chunks.append(current.strip())
@@ -726,7 +752,8 @@ class VectorMemory:
         collection = await self.ensure_corpus(corpus)
 
         chunk_size = chunk_size or settings.CORPUS_CHUNK_SIZE
-        chunk_overlap = chunk_overlap or settings.CORPUS_CHUNK_OVERLAP
+        if chunk_overlap is None:  # явный 0 — «без наложения», а не «взять из настроек»
+            chunk_overlap = settings.CORPUS_CHUNK_OVERLAP
 
         chunks = self._chunk_text(content, chunk_size, chunk_overlap)
         if not chunks:
@@ -810,6 +837,55 @@ class VectorMemory:
         except Exception as e:
             logger.error(f"Failed to search corpus: {e}")
             return []
+
+    async def delete_corpus_by_name(
+        self, source_name: str, corpus: str = DEFAULT_CORPUS, keep_source_id: Optional[str] = None
+    ) -> int:
+        """Удалить все чанки документов с данным именем файла (кроме keep_source_id).
+
+        Возвращает число удалённых чанков. Нужно, чтобы повторная загрузка файла заменяла
+        прежнюю версию, а не дублировала её.
+        """
+        collection = await self.ensure_corpus(corpus)
+        where: Dict[str, Any] = {"source_name": source_name}
+        if keep_source_id:
+            where = {"$and": [{"source_name": source_name}, {"source_id": {"$ne": keep_source_id}}]}
+        try:
+            found = await asyncio.to_thread(collection.get, where=where, include=[])
+            ids = found.get("ids") or []
+            if ids:
+                await asyncio.to_thread(collection.delete, ids=ids)
+            return len(ids)
+        except Exception as e:
+            logger.error(f"Failed to delete corpus documents named {source_name!r}: {e}")
+            return 0
+
+    async def get_corpus_sources(self, corpus: str = DEFAULT_CORPUS, limit: int = 5000) -> List[Dict[str, Any]]:
+        """Документы корпуса: имя, число чанков, средняя длина чанка (до limit чанков)."""
+        collection = await self.ensure_corpus(corpus)
+        stats: Dict[str, Dict[str, int]] = {}
+        try:
+            offset = 0
+            while offset < limit:
+                part = await asyncio.to_thread(
+                    collection.get, include=["documents", "metadatas"], limit=min(500, limit - offset), offset=offset
+                )
+                ids = part.get("ids")
+                if not isinstance(ids, list) or not ids:
+                    break
+                for doc, meta in zip(part.get("documents") or [], part.get("metadatas") or []):
+                    name = (meta or {}).get("source_name") or "без названия"
+                    st = stats.setdefault(name, {"chunks": 0, "chars": 0})
+                    st["chunks"] += 1
+                    st["chars"] += len(doc or "")
+                offset += len(ids)
+        except Exception as e:
+            logger.error(f"Failed to list corpus sources: {e}")
+        return sorted(
+            ({"name": n, "chunks": v["chunks"], "avg_chars": v["chars"] // max(1, v["chunks"])}
+             for n, v in stats.items()),
+            key=lambda x: (-x["chunks"], x["name"]),
+        )
 
     async def delete_corpus_document(
         self, source_id: str, corpus: str = DEFAULT_CORPUS

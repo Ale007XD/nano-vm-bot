@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.11.2 · **Тесты:** 727 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.12.0 · **Тесты:** 743 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -202,9 +202,9 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто и нет `SHOWCASES` — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель витрин по умолчанию (поле `model` витрины переопределяет) |
 | `SHOWCASE_SYSTEM_PROMPT` | — | вшитый | Системный промпт витрин по умолчанию (поле `system_prompt` витрины переопределяет) |
-| `CORPUS_CHUNK_SIZE` | — | `1200` | Размер чанка корпуса (символы) |
-| `CORPUS_CHUNK_OVERLAP` | — | `200` | Перекрытие чанков корпуса (символы) |
-| `CORPUS_TOP_K` | — | `5` | Чанков в контексте ответа |
+| `CORPUS_CHUNK_SIZE` | — | `450` | Размер чанка корпуса (символы): под окно 128 токенов модели по умолчанию; для моделей с окном 512 — `1200` |
+| `CORPUS_CHUNK_OVERLAP` | — | `80` | Наложение соседних чанков (символы) |
+| `CORPUS_TOP_K` | — | `8` | Чанков в контексте ответа (чанки короче — берём больше) |
 | `BOT_TIMEZONE` | — | `Europe/Moscow` | Зона времени в ответах и планировщике |
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |

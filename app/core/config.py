@@ -254,13 +254,18 @@ class Settings(BaseSettings):
         description="System prompt демо-бота витрины"
     )
     CORPUS_CHUNK_SIZE: int = Field(
-        default=1200, description="Размер чанка при загрузке корпуса (символы)"
+        default=450,
+        description=(
+            "Размер чанка при загрузке корпуса (символы). 450 ≈ окно модели эмбеддингов по умолчанию "
+            "(128 токенов): чанк длиннее обрезается при векторизации. Для моделей с окном 512 токенов "
+            "(mpnet, E5) — 1200"
+        ),
     )
     CORPUS_CHUNK_OVERLAP: int = Field(
-        default=200, description="Перекрытие чанков корпуса (символы)"
+        default=80, description="Максимальное наложение соседних чанков корпуса (символы)"
     )
     CORPUS_TOP_K: int = Field(
-        default=5, description="Сколько чанков корпуса подавать в контекст ответа"
+        default=8, description="Сколько чанков корпуса подавать в контекст ответа (чанки короче — берём больше)"
     )
 
     BOT_OPEN_ACCESS: bool = Field(
@@ -548,7 +553,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.11.2", description="Application version")
+    APP_VERSION: str = Field(default="1.12.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

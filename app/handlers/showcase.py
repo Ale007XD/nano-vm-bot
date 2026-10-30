@@ -145,7 +145,7 @@ async def cmd_help(message: Message):
     )
     if is_admin(message.from_user.id):
         text += (
-            "\n\nАдминистратору: /corpus_stats, /corpus_upload, "
+            "\n\nАдминистратору: /corpus_stats, /corpus_upload, /corpus_delete, "
             "/invite, /invites, /revoke_invite, /allow, /deny, /members"
         )
     await message.answer(text)
@@ -161,10 +161,44 @@ async def cmd_corpus_stats(message: Message):
 
     sc = current_showcase()
     stats = await vector_memory.get_corpus_stats(corpus=sc.collection)
-    await message.answer(
-        f"📊 <b>Корпус базы знаний{' «' + html.escape(sc.slug) + '»' if sc.slug else ''}:</b>\n"
-        f"• чанков в индексе: <b>{stats.get('chunks', 0)}</b>\n"
-    )
+    sources = await vector_memory.get_corpus_sources(corpus=sc.collection)
+    lines = [
+        f"📊 <b>Корпус базы знаний{' «' + html.escape(sc.slug) + '»' if sc.slug else ''}:</b>",
+        f"• чанков в индексе: <b>{stats.get('chunks', 0)}</b>",
+        f"• документов: <b>{len(sources)}</b>",
+        f"• размер чанка при загрузке: {settings.CORPUS_CHUNK_SIZE} символов "
+        f"(наложение {settings.CORPUS_CHUNK_OVERLAP})",
+    ]
+    for src in sources[:15]:
+        lines.append(
+            f"  – {html.escape(src['name'])}: {src['chunks']} чанк., в среднем {src['avg_chars']} симв."
+        )
+    if len(sources) > 15:
+        lines.append(f"  … и ещё документов: {len(sources) - 15}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("corpus_delete"))
+async def cmd_corpus_delete(message: Message, command: CommandObject = None):
+    """/corpus_delete <имя файла> — удалить документ из корпуса этой витрины."""
+    from app.handlers.commands import is_admin
+
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+
+    name = ((command.args if command else "") or "").strip()
+    if not name:
+        await message.answer(
+            "Укажите имя файла: <code>/corpus_delete Правила.md</code> "
+            "(имена и размеры — в /corpus_stats)."
+        )
+        return
+    removed = await vector_memory.delete_corpus_by_name(name, corpus=current_showcase().collection)
+    if removed:
+        await message.answer(f"🗑 Документ <b>{html.escape(name)}</b> удалён (чанков: {removed}).")
+    else:
+        await message.answer(f"Документ «{html.escape(name)}» не найден. Имена — в /corpus_stats.")
 
 
 @router.message(Command("corpus_upload"))
@@ -216,17 +250,24 @@ async def handle_document(message: Message):
         source_id = f"upload_{message.from_user.id}_{doc.file_id}"
         source_name = os.path.basename(doc.file_name or "документ")
 
+        corpus = current_showcase().collection
         await vector_memory.add_corpus_document(
             source_id=source_id,
             source_name=source_name,
             content=content,
             source_url=None,
-            corpus=current_showcase().collection,
+            corpus=corpus,
+        )
+        # повторная загрузка файла с тем же именем заменяет прежнюю версию, а не дублирует её
+        # (старая версия удаляется только после успешного добавления новой)
+        replaced = await vector_memory.delete_corpus_by_name(
+            source_name, corpus=corpus, keep_source_id=source_id
         )
 
         await processing_msg.edit_text(
             f"✅ Документ <b>{sanitize_html(source_name)}</b> добавлен в базу знаний "
             f"(источник: <code>{source_id}</code>)."
+            + (f"\n♻️ Заменена прежняя версия (удалено чанков: {replaced})." if replaced else "")
         )
 
     except Exception as e:

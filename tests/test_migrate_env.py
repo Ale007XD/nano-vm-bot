@@ -115,3 +115,11 @@ def test_lint_embedding_model(me):
     e5 = {"EMBEDDING_MODEL": "intfloat/multilingual-e5-large"}
     assert "BOT_MEM_LIMIT" in " ".join(me.lint(e5))
     assert not [w for w in me.lint({**e5, "BOT_MEM_LIMIT": "3500m", "SHOWCASE_MEM_LIMIT": "3500m"}) if "ОЗУ" in w]
+
+
+def test_lint_large_corpus_chunk_with_small_window_model(me):
+    assert "CORPUS_CHUNK_SIZE" in " ".join(me.lint({"CORPUS_CHUNK_SIZE": "1200"}))
+    assert not [w for w in me.lint({"CORPUS_CHUNK_SIZE": "450"}) if "CORPUS_CHUNK" in w]
+    big_ok = {"CORPUS_CHUNK_SIZE": "1200", "EMBEDDING_MODEL": "intfloat/multilingual-e5-large",
+              "BOT_MEM_LIMIT": "3500m", "SHOWCASE_MEM_LIMIT": "3500m"}
+    assert not [w for w in me.lint(big_ok) if "CORPUS_CHUNK" in w]
