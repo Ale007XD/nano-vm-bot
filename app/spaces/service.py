@@ -235,8 +235,12 @@ async def set_role(space_id: int, user_id: int, role: str, session_maker=None) -
         return True
 
 
+def ROLE_RANK_OF(role: Optional[str]) -> int:
+    return ROLE_RANK.get(role or "", 0)
+
+
 def role_at_least(role: Optional[str], needed: str) -> bool:
-    return ROLE_RANK.get(role or "", 0) >= ROLE_RANK[needed]
+    return ROLE_RANK_OF(role) >= ROLE_RANK[needed]
 
 
 # ----------------------------- приглашения ------------------------------- #

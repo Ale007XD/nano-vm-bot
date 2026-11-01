@@ -14,12 +14,14 @@ from app.handlers import (
     providers,
     reminders,
     skills,
+    spaces,
 )
 
 
 def register_handlers(dp: Dispatcher):
     """Register all handlers"""
     # Include routers — order matters for FSM priority
+    dp.include_router(spaces.router)      # /start sp_<код>, /space_new, /invite — до commands: ссылка пускает чужих
     dp.include_router(commands.router)
     dp.include_router(byok.router)        # /byok — свои API-ключи пользователей
     dp.include_router(billing.router)     # /buy /balance, оплата, successful_payment
