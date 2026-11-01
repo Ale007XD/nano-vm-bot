@@ -7,6 +7,8 @@
 Режимы:
 - BOT_OPEN_ACCESS=false (дефолт): бот приватный, доступ только ADMIN_IDS.
 - BOT_OPEN_ACCESS=true: бот отвечает всем, кроме забаненных (/ban, /unban).
+- SPACES_ENABLED=true: в закрытом режиме дополнительно пускаются участники активных
+  пространств (app/spaces); бан-лист действует и на них.
 - SHOWCASE_OPEN_ACCESS: то же для витрины; не задан — наследует BOT_OPEN_ACCESS.
 
 Лимиты:
@@ -36,6 +38,19 @@ def showcase_open() -> bool:
     return bool(getattr(settings, "BOT_OPEN_ACCESS", False))
 
 
+async def _space_member(telegram_id: int) -> bool:
+    """Участник активного пространства (семья/фирма/класс) при SPACES_ENABLED=true."""
+    if getattr(settings, "SPACES_ENABLED", False) is not True:
+        return False
+    try:
+        from app.spaces.service import is_member_anywhere
+
+        return await is_member_anywhere(telegram_id)
+    except Exception as e:  # БД недоступна — закрытый режим не должен открываться
+        logger.warning(f"Space membership check failed for {telegram_id}: {e}")
+        return False
+
+
 async def user_allowed(telegram_id: int, open_access: Optional[bool] = None) -> bool:
     """Пропускать ли сообщение пользователя.
 
@@ -44,9 +59,10 @@ async def user_allowed(telegram_id: int, open_access: Optional[bool] = None) -> 
     """
     if is_admin(telegram_id):
         return True
-    if open_access is None:
+    main_bot = open_access is None  # участники пространств пускаются только в основного бота
+    if main_bot:
         open_access = bool(getattr(settings, "BOT_OPEN_ACCESS", False))
-    if not open_access:
+    if not open_access and not (main_bot and await _space_member(telegram_id)):
         return False
     try:
         from app.core.database import is_user_banned

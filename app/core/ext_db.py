@@ -26,6 +26,7 @@ _FEATURE_MODULES = (
     "app.core.operator",
     "app.core.showcase_access",
     "app.core.showcase_usage",
+    "app.spaces.models",
     "app.core.billing.models",
 )
 

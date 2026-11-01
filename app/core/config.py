@@ -255,6 +255,12 @@ class Settings(BaseSettings):
         default=0, ge=0,
         description="Суточный потолок LLM-ответов всех витрин вместе (UTC; 0 — без потолка)",
     )
+    SPACES_ENABLED: bool = Field(
+        default=False,
+        description="Пускать в бота участников пространств (семья/фирма/класс), не только ADMIN_IDS и открытый доступ"
+    )
+    SPACE_MAX_MEMBERS: int = Field(default=20, ge=1, le=1000, description="Максимум участников в одном пространстве")
+    SPACE_INVITE_TTL_DAYS: int = Field(default=7, ge=1, le=365, description="Срок действия приглашения в пространство, дней")
     RAG_MEMORIES: int = Field(
         default=10, ge=0, le=50,
         description="Сколько воспоминаний подмешивать в контекст Planner (RAG) на один запрос"
@@ -533,7 +539,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.17.0", description="Application version")
+    APP_VERSION: str = Field(default="1.18.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")
