@@ -270,6 +270,28 @@ class TestQuestions:
         assert "БАЗА ЗНАНИЙ:" in system
 
     @pytest.mark.asyncio
+    async def test_prompt_from_file_reaches_the_llm_and_edits_apply_without_restart(self, B, monkeypatch, tmp_path):
+        import dataclasses
+        import os
+
+        await showcase_access.add_member("jurist", 50)
+        f = tmp_path / "jurist.md"
+        f.write_text("ФАЙЛ-ВЕРСИЯ-1. Отвечай по базе знаний.", encoding="utf-8")
+        with_file = dataclasses.replace(B, system_prompt="", system_prompt_file=str(f))
+        monkeypatch.setattr(sc.vector_memory, "search_corpus", AsyncMock(return_value=[doc("faq")]))
+        llm = AsyncMock(return_value=SimpleNamespace(content="ответ"))
+        monkeypatch.setattr(sc.llm_client, "chat_with_fallback", llm)
+
+        with showcases.use_showcase(with_file):
+            await sc.handle_message(msg(50, "вопрос 1"))
+            f.write_text("ФАЙЛ-ВЕРСИЯ-2. Отвечай по базе знаний.", encoding="utf-8")
+            os.utime(f, ns=(1, 4_000_000_000))
+            await sc.handle_message(msg(50, "вопрос 2"))
+        first, second = llm.await_args_list
+        assert "ФАЙЛ-ВЕРСИЯ-1" in first.args[0][0].content
+        assert "ФАЙЛ-ВЕРСИЯ-2" in second.args[0][0].content
+
+    @pytest.mark.asyncio
     async def test_non_member_is_refused_before_any_search(self, B, monkeypatch):
         search = AsyncMock(return_value=[doc("faq")])
         monkeypatch.setattr(sc.vector_memory, "search_corpus", search)

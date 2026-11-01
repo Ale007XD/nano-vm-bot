@@ -103,10 +103,10 @@ def test_lint_flags_bad_planner_and_showcase_prompts(me):
 
 
 def test_lint_accepts_good_prompts(me):
-    mod = me._planner_prompt()
+    tools = me._prompt_tools()
     good = {
-        "PLANNER_SYSTEM_PROMPT": mod.to_env_line("PLANNER_SYSTEM_PROMPT", mod.DEFAULT_PLANNER_PROMPT).split("=", 1)[1],
-        "SHOWCASE_SYSTEM_PROMPT": mod.to_env_line("X", me._showcase_prompt().DEFAULT_SHOWCASE_PROMPT).split("=", 1)[1],
+        "PLANNER_SYSTEM_PROMPT": tools.to_env_line("X", me._planner_prompt().DEFAULT_PLANNER_PROMPT).split("=", 1)[1],
+        "SHOWCASE_SYSTEM_PROMPT": tools.to_env_line("X", me._showcase_prompt().DEFAULT_SHOWCASE_PROMPT).split("=", 1)[1],
     }
     assert me.lint(good) == []
 
@@ -126,19 +126,33 @@ def test_lint_large_corpus_chunk_with_small_window_model(me):
     assert not [w for w in me.lint(big_ok) if "CORPUS_CHUNK" in w]
 
 
-def test_print_prompt_roundtrips_through_dotenv(me, tmp_path, monkeypatch, capsys):
+def test_print_prompt_roundtrips_through_dotenv_and_own_parser(me, tmp_path, monkeypatch, capsys):
     import sys
 
     from dotenv import dotenv_values
 
-    monkeypatch.setattr(sys, "argv", ["m", "--print-prompt", "PLANNER_SYSTEM_PROMPT"])
+    for name, attr, mod in (
+        ("PLANNER_SYSTEM_PROMPT", "DEFAULT_PLANNER_PROMPT", me._planner_prompt()),
+        ("SHOWCASE_SYSTEM_PROMPT", "DEFAULT_SHOWCASE_PROMPT", me._showcase_prompt()),
+    ):
+        monkeypatch.setattr(sys, "argv", ["m", "--print-prompt", name])
+        me.main()
+        out = capsys.readouterr().out
+        env = tmp_path / ".env"
+        env.write_text(out, encoding="utf-8")
+        want = getattr(mod, attr).rstrip("\n")
+        assert dotenv_values(env)[name] == want
+        parsed, _, _, warns = me.parse_old(out.rstrip("\n").split("\n"))
+        assert me._unquote(parsed[name]) == want and not warns
+        assert me.lint({name: parsed[name]}) == []  # выгруженное линтер считает корректным
+
+
+def test_print_prompt_text_is_raw_default(me, monkeypatch, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["m", "--print-prompt-text", "PLANNER_SYSTEM_PROMPT"])
     me.main()
-    line = capsys.readouterr().out.strip()
-    env = tmp_path / ".env"
-    env.write_text(line + "\n", encoding="utf-8")
-    assert dotenv_values(env)["PLANNER_SYSTEM_PROMPT"] == me._planner_prompt().DEFAULT_PLANNER_PROMPT
-    # выгруженный дефолт линтер считает корректным
-    assert me.lint({"PLANNER_SYSTEM_PROMPT": line.split("=", 1)[1]}) == []
+    assert capsys.readouterr().out == me._planner_prompt().DEFAULT_PLANNER_PROMPT
 
 
 def test_lint_reports_missing_schema_parts(me):
@@ -146,22 +160,47 @@ def test_lint_reports_missing_schema_parts(me):
     assert "plan" in text and "call_llm" in text and "--print-prompt" in text
 
 
-def test_print_prompt_showcase_roundtrips(me, tmp_path, monkeypatch, capsys):
-    import sys
-
-    from dotenv import dotenv_values
-
-    monkeypatch.setattr(sys, "argv", ["m", "--print-prompt", "SHOWCASE_SYSTEM_PROMPT"])
-    me.main()
-    line = capsys.readouterr().out.strip()
-    env = tmp_path / ".env"
-    env.write_text(line + "\n", encoding="utf-8")
-    assert dotenv_values(env)["SHOWCASE_SYSTEM_PROMPT"] == me._showcase_prompt().DEFAULT_SHOWCASE_PROMPT
-    assert me.lint({"SHOWCASE_SYSTEM_PROMPT": line.split("=", 1)[1]}) == []
-
-
 def test_lint_showcase_prompt_levels(me):
     persona_only = " ".join(me.lint({"SHOWCASE_SYSTEM_PROMPT": '"Ты — помощник."'}))
     assert "отвергается" in persona_only and "БАЗА ЗНАНИЙ" in persona_only
     weak = " ".join(me.lint({"SHOWCASE_SYSTEM_PROMPT": '"Отвечай по базе знаний."'}))
     assert "отвергается" not in weak and "нет правила" in weak
+
+
+class TestMultilineAndDollar:
+    PROMPT = "Строка 1 $step1\nСтрока 2 \"в кавычках\" и ${не_переменная}\n\nСтрока 4"
+
+    def test_multiline_single_quoted_value_survives_migration_verbatim(self, me, tmp_path, monkeypatch):
+        import sys
+
+        tpl = tmp_path / ".env.example"
+        tpl.write_text("BOT_TOKEN=your_telegram_bot_token_here\n# PLANNER_SYSTEM_PROMPT=\"...\"\nAPP_VERSION=2.0\n", encoding="utf-8")
+        old = tmp_path / ".env"
+        old.write_text("BOT_TOKEN=1:abc\nPLANNER_SYSTEM_PROMPT='" + self.PROMPT + "'\nTAIL=1\n", encoding="utf-8")
+        out = tmp_path / ".env.new"
+        monkeypatch.setattr(sys, "argv", ["m", "--old", str(old), "--template", str(tpl), "--out", str(out)])
+        me.main()
+        parsed, _, _, warns = me.parse_old(out.read_text(encoding="utf-8").split("\n"))
+        assert parsed["PLANNER_SYSTEM_PROMPT"] == "'" + self.PROMPT + "'"
+        assert parsed["TAIL"] == "1" and not warns  # значение после многострочного не потеряно
+
+    def test_unclosed_quote_warns_and_does_not_swallow_the_rest_silently(self, me):
+        parsed, _, _, warns = me.parse_old(["A='начало", "продолжение", "B=2"])
+        assert any("не закрыта" in w for w in warns)
+
+    def test_escaped_quote_inside_does_not_close(self, me):
+        parsed, _, _, warns = me.parse_old(["A='it\\'s", "ok'", "B=2"])
+        assert parsed["A"] == "'it\\'s\nok'" and parsed["B"] == "2" and not warns
+
+    @pytest.mark.parametrize("value, flagged", [
+        ('"x $step1 y"', True),
+        ("x$step1", True),
+        ('"${VAR}"', True),
+        ("'x $step1 y'", False),   # одинарные кавычки — буквально
+        ('"cost $$5"', False),     # уже экранировано
+        ("plain", False),
+        ('"price 5$"', False),     # $ без имени
+    ])
+    def test_lint_dollar_references(self, me, value, flagged):
+        text = " ".join(me.lint({"SOME_KEY": value}))
+        assert ("docker compose подставит" in text) is flagged

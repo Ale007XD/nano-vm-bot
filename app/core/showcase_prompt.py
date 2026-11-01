@@ -8,11 +8,8 @@
 
 Модуль зависит только от stdlib: его загружают конфиг, хендлер, бот и scripts/migrate_env.py.
 """
-import logging
 import re
-from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
-
-logger = logging.getLogger(__name__)
+from typing import Any, List, NamedTuple, Optional, Tuple
 
 # Заголовок блока, который хендлер дописывает к промпту (app/handlers/showcase.py)
 KNOWLEDGE_BLOCK = "БАЗА ЗНАНИЙ"
@@ -77,49 +74,33 @@ def validate_showcase_prompt(text: Optional[str]) -> PromptCheck:
     return PromptCheck(errors, warnings)
 
 
-# Какие (источник, текст) уже отмечены в логе, чтобы не писать ошибку на каждый запрос
-_reported: set = set()
+def resolve_showcase_prompt(candidates, default: str = DEFAULT_SHOWCASE_PROMPT) -> str:
+    """Первый непустой и корректный промпт из candidates [(источник, текст), ...], иначе default."""
+    from app.core.prompt_tools import (
+        resolve_prompt,  # лениво: модуль грузят и по пути, без пакета app
+    )
+
+    return resolve_prompt(
+        candidates, default, validate_showcase_prompt,
+        "python3 scripts/migrate_env.py --print-prompt SHOWCASE_SYSTEM_PROMPT",
+    )
 
 
-def _log_once(level: int, source: str, text: str, message: str) -> None:
-    key = (level, source, text)
-    if key not in _reported:
-        _reported.add(key)
-        logger.log(level, message)
+def candidates_for(showcase: Any, env_prompt: Any, env_file: Any = "") -> List[Tuple[str, Any]]:
+    """Источники в порядке приоритета: поле витрины, её файл, общий файл, значение в .env."""
+    from app.core.prompt_tools import read_prompt_file
+
+    slug = getattr(showcase, "slug", "")
+    who = f"витрина «{slug}»" if slug else "витрина"
+    own_file = getattr(showcase, "system_prompt_file", "")
+    return [
+        (f"{who}, поле system_prompt", getattr(showcase, "system_prompt", "")),
+        (f"{who}, файл {own_file}", read_prompt_file(own_file)),
+        (f"файл {env_file}", read_prompt_file(env_file)),
+        ("SHOWCASE_SYSTEM_PROMPT в .env", env_prompt),
+    ]
 
 
-def resolve_showcase_prompt(candidates: Iterable[Tuple[str, Any]], default: str = DEFAULT_SHOWCASE_PROMPT) -> str:
-    """Первый непустой и корректный промпт из candidates [(источник, текст), ...], иначе default.
-
-    Пустые пропускаются молча; некорректный — громкая ошибка в логе (один раз на источник и
-    текст) и переход к следующему кандидату.
-    """
-    for source, text in candidates:
-        if not (isinstance(text, str) and text.strip()):
-            continue
-        if text == default:
-            return text
-        check = validate_showcase_prompt(text)
-        if check.errors:
-            _log_once(
-                logging.ERROR, source, text,
-                f"Системный промпт витрин ({source}) отвергнут: {'; '.join(check.errors)}. Берётся следующий "
-                "источник или встроенный промпт. Дефолт для правки: python3 scripts/migrate_env.py "
-                "--print-prompt SHOWCASE_SYSTEM_PROMPT",
-            )
-            continue
-        if check.warnings:
-            _log_once(logging.WARNING, source, text, f"Системный промпт витрин ({source}): " + "; ".join(check.warnings))
-        return text
-    return default
-
-
-def candidates_for(showcase: Any, env_prompt: Any) -> List[Tuple[str, Any]]:
-    """Источники в порядке приоритета: поле витрины, затем env."""
-    label = f"витрина «{showcase.slug}», поле system_prompt" if getattr(showcase, "slug", "") else "витрина, system_prompt"
-    return [(label, getattr(showcase, "system_prompt", "")), ("SHOWCASE_SYSTEM_PROMPT в .env", env_prompt)]
-
-
-def effective_prompt(showcase: Any, env_prompt: Any) -> str:
+def effective_prompt(showcase: Any, env_prompt: Any, env_file: Any = "") -> str:
     """Действующий промпт витрины (вызывается на каждый ответ и при старте)."""
-    return resolve_showcase_prompt(candidates_for(showcase, env_prompt))
+    return resolve_showcase_prompt(candidates_for(showcase, env_prompt, env_file))

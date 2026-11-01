@@ -31,19 +31,45 @@ def read_lines(path):
         return [ln.rstrip("\r\n") for ln in f]
 
 
+def _closed(text, q):
+    """В text (начинается с кавычки q) есть незаэкранированная закрывающая кавычка."""
+    i = 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == q:
+            return True
+        i += 1
+    return False
+
+
 def parse_old(lines):
+    """{КЛЮЧ: значение}; значения в кавычках могут занимать несколько строк (дословно, с переводами)."""
     values, order, dups, warnings = {}, [], {}, []
-    for n, ln in enumerate(lines, 1):
+    i = 0
+    while i < len(lines):
+        n, ln = i + 1, lines[i]
+        i += 1
         s = ln.strip()
         if not s or s.startswith("#"):
             continue
         m = ACTIVE.match(s)
         if not m:
-            warnings.append(f"строка {n}: не «KEY=VALUE» — пропущена (многострочное значение?)")
+            warnings.append(f"строка {n}: не «KEY=VALUE» — пропущена")
             continue
         k, v = m.group(1), m.group(2)
-        if len(v) > 1 and v[0] in "\"'" and v[-1] != v[0]:
-            warnings.append(f"{k}: кавычка не закрыта на той же строке — многострочные значения не поддерживаются")
+        q = v[0] if v and v[0] in "\"'" else ""
+        if q and not _closed(v, q):
+            parts, j = [v], i
+            while j < len(lines):
+                parts.append(lines[j].rstrip("\r\n"))
+                j += 1
+                if _closed("\n".join(parts), q):
+                    v, i = "\n".join(parts), j
+                    break
+            else:
+                warnings.append(f"{k}: кавычка не закрыта до конца файла — значение взято как есть, проверьте")
         if k in values:
             dups.setdefault(k, [values[k]]).append(v)
         else:
@@ -124,16 +150,36 @@ PROMPT_DEFAULTS = {
 }
 
 
+def _prompt_tools():
+    return _load_core("prompt_tools")
+
+
 def _unquote(raw):
-    """Значение как увидит приложение: в двойных кавычках \\n и \\" разворачиваются."""
+    """Значение как увидит приложение: одинарные кавычки — буквально (\\' -> '), двойные — с \\n, \\"."""
     value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("\\'", "'")
     if len(value) >= 2 and value[0] == value[-1] == '"':
-        value = value[1:-1].replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+        return value[1:-1].replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
     return value
+
+
+# $имя без одинарных кавычек docker compose подставит из окружения (в контейнер попадёт пустое место)
+DOLLAR_REF = re.compile(r"(?<!\$)\$[A-Za-z_{]")
 
 
 def lint(old):
     warns = []
+    for key, raw in old.items():
+        v = raw.strip()
+        if v.startswith("'"):
+            continue  # одинарные кавычки: compose и python-dotenv читают $ буквально
+        if DOLLAR_REF.search(v):
+            warns.append(
+                f"{key}: значение содержит $имя без одинарных кавычек — docker compose подставит переменную "
+                "(в контейнер попадёт пустое место, на каждое вхождение — предупреждение «variable is not set»). "
+                "Возьмите значение в одинарные кавычки, удвойте $$ или для промптов используйте файл (*_FILE)"
+            )
     planner = old.get("PLANNER_SYSTEM_PROMPT", "")
     if planner.strip().strip("\"'"):
         value = _unquote(planner)
@@ -194,14 +240,28 @@ def main():
     ap.add_argument("--out", default=".env.new")
     ap.add_argument(
         "--print-prompt", metavar="ИМЯ", choices=sorted(PROMPT_DEFAULTS),
-        help="вывести встроенный промпт в формате строки .env (для правки): " + ", ".join(sorted(PROMPT_DEFAULTS)),
+        help="встроенный промпт строкой .env (одинарные кавычки, несколько строк — безопасно для docker "
+             "compose): " + ", ".join(sorted(PROMPT_DEFAULTS)),
+    )
+    ap.add_argument(
+        "--print-prompt-text", metavar="ИМЯ", choices=sorted(PROMPT_DEFAULTS),
+        help="встроенный промпт как есть — для файла (…_FILE): "
+             "python3 scripts/migrate_env.py --print-prompt-text ИМЯ > data/prompts/файл.md",
     )
     a = ap.parse_args()
 
-    if a.print_prompt:
-        module, attr = PROMPT_DEFAULTS[a.print_prompt]
-        print(_planner_prompt().to_env_line(a.print_prompt, getattr(_load_core(module), attr)))
-        return
+    for flag in (a.print_prompt, a.print_prompt_text):
+        if flag:
+            module, attr = PROMPT_DEFAULTS[flag]
+            text = getattr(_load_core(module), attr)
+            if flag == a.print_prompt:
+                try:
+                    print(_prompt_tools().to_env_line(flag, text))
+                except ValueError as e:
+                    sys.exit(f"{flag}: {e}")
+            else:
+                print(text, end="")
+            return
 
     for p in (a.old, a.template):
         if not os.path.isfile(p):
@@ -214,7 +274,7 @@ def main():
     out, kept, added, activated, placeholders, unknown = merge(tpl, old)
 
     # самопроверка: каждое ваше значение попало в результат дословно
-    produced, _, _, _ = parse_old(out)
+    produced, _, _, _ = parse_old("\n".join(out).split("\n"))
     bad = [k for k, v in old.items() if k not in FORCE_FROM_TEMPLATE and produced.get(k) != v]
     if bad:
         sys.exit("Самопроверка не пройдена, значения изменились: " + ", ".join(bad))

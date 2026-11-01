@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.16.0 · **Тесты:** 845 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.17.0 · **Тесты:** 886 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -203,7 +203,7 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `PLANBOT_MAX_CALLS` | — | `4` | Бюджет LLM-вызовов PlanBot (план + шаги + итог): 4 — до 2 шагов, влезает в бесплатный лимит Groq; 7 — расширенный режим |
 | `SHOWCASE_BOT_TOKEN` | — | — | Токен демо-бота витрины (пусто и нет `SHOWCASES` — сервис витрины не запускается) |
 | `SHOWCASE_MODEL` | — | `openai/gpt-oss-20b` | Модель витрин по умолчанию (поле `model` витрины переопределяет) |
-| `SHOWCASE_SYSTEM_PROMPT` | — | вшитый | Системный промпт витрин по умолчанию (поле `system_prompt` витрины переопределяет). Проверяется: без требования отвечать по блоку «БАЗА ЗНАНИЙ» отвергается (ошибка в логе, применяется следующий источник или встроенный). Дефолт для правки: `python3 scripts/migrate_env.py --print-prompt SHOWCASE_SYSTEM_PROMPT` |
+| `SHOWCASE_SYSTEM_PROMPT` / `SHOWCASE_SYSTEM_PROMPT_FILE` | — | вшитый | Системный промпт витрин: значение в `.env` (в **одинарных** кавычках) или файл (рекомендуется, `data/prompts/showcase.md`, правки без перезапуска). Приоритет: поле `system_prompt` витрины → её `system_prompt_file` → файл → `.env` → встроенный. Проверяется: без требования отвечать по блоку «БАЗА ЗНАНИЙ» отвергается (ошибка в логе, берётся следующий источник). Встроенный для правки: `python3 scripts/migrate_env.py --print-prompt-text SHOWCASE_SYSTEM_PROMPT` |
 | `CORPUS_CHUNK_SIZE` | — | `450` | Размер чанка корпуса (символы): под окно 128 токенов модели по умолчанию; для моделей с окном 512 — `1200` |
 | `CORPUS_CHUNK_OVERLAP` | — | `80` | Наложение соседних чанков (символы) |
 | `CORPUS_TOP_K` | — | `8` | Чанков в контексте ответа (чанки короче — берём больше) |
@@ -212,7 +212,9 @@ GitHub Actions · Python 3.12 · установка `requirements-dev.txt` (runt
 | `FASTBOT_MODEL` / `SKILLBOT_MODEL` / `PLANBOT_MODEL` | — | gpt-oss-20b/20b/120b | Модели агентов (Groq) |
 | `VISION_MODEL` | — | `qwen/qwen3.8-27b` | Мультимодальная модель Groq для фото |
 | `WHISPER_MODEL` | — | `whisper-large-v3` | Распознавание голоса |
-| `FASTBOT_SYSTEM_PROMPT` / `PLANBOT_SYSTEM_PROMPT` / `SKILLBOT_SYSTEM_PROMPT` / `PLANNER_SYSTEM_PROMPT` | — | вшитые | Системные промпты (одной строкой в двойных кавычках, переносы `\n`). Заменяют встроенный промпт целиком — `PLANNER_SYSTEM_PROMPT` проверяется (схема DSL обязательна; без неё применяется встроенный и пишется ошибка в лог); дефолт для правки: `python3 scripts/migrate_env.py --print-prompt PLANNER_SYSTEM_PROMPT`. Обновить `.env` после релиза: `python3 scripts/migrate_env.py` → `.env.new` |
+| `FASTBOT_SYSTEM_PROMPT` / `PLANBOT_SYSTEM_PROMPT` / `SKILLBOT_SYSTEM_PROMPT` | — | вшитые | Системные промпты агентов (одной строкой, в двойных кавычках, переносы `
+`; `$` не используйте — docker compose подставит переменную). Заменяют встроенный промпт целиком. Обновить `.env` после релиза: `python3 scripts/migrate_env.py` → `.env.new` |
+| `PLANNER_SYSTEM_PROMPT` / `PLANNER_SYSTEM_PROMPT_FILE` | — | вшитый | Промпт Planner: файл (рекомендуется, `data/prompts/planner.md`) или значение в `.env` в **одинарных** кавычках (в двойных docker compose вырезает `$step1`). Проверяется: без схемы DSL отвергается (ошибка в логе, применяется встроенный). Встроенный для правки: `python3 scripts/migrate_env.py --print-prompt-text PLANNER_SYSTEM_PROMPT > data/prompts/planner.md` |
 | `DATABASE_URL` | — | `sqlite+aiosqlite:///data/bot.db` | |
 | `VECTOR_STORE_PATH` | — | `data/vector_store` | |
 

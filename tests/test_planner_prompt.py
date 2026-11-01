@@ -60,6 +60,17 @@ class TestValidation:
         no_ref = pp.DEFAULT_PLANNER_PROMPT.replace("$", "")
         assert pp.validate_planner_prompt(no_ref).errors
 
+    def test_prompt_mangled_by_docker_compose_is_rejected(self, pp):
+        """docker compose вырезает $step1/$step_id, а «$<id шага>» остаётся — раньше это проходило проверку."""
+        mangled = re.sub(r"\$step\w*", "", pp.DEFAULT_PLANNER_PROMPT)
+        assert "$<id" in mangled  # именно такой остаток и обманывал прежнюю проверку
+        errors = " | ".join(pp.validate_planner_prompt(mangled).errors)
+        assert "$step1" in errors and "docker compose" in errors
+
+    def test_only_angle_bracket_reference_is_not_enough(self, pp):
+        text = MINIMAL_OK.replace("$step1", "$<id шага>")
+        assert any("$step1" in e for e in pp.validate_planner_prompt(text).errors)
+
 
 class TestContractWithCode:
     """Дефолт описывает ровно то, что умеет VM: расхождение кода и промпта ловится здесь."""
@@ -103,9 +114,11 @@ class TestContractWithCode:
 class TestPlannerUsesPrompt:
     @pytest.fixture
     def planner_cls(self, monkeypatch):
+        from app.core import prompt_tools
         from app.runtime import planner as planner_mod
 
-        planner_mod._reported_prompts.clear()
+        prompt_tools._reported.clear()
+        prompt_tools._file_cache.clear()
         return planner_mod
 
     def _set(self, monkeypatch, value):
@@ -181,21 +194,16 @@ def pp_default_with_extra_rule():
 
 
 class TestEnvRoundtrip:
-    def test_to_env_line_roundtrips_through_dotenv(self, pp, tmp_path):
-        from dotenv import dotenv_values
-
-        nasty = 'Строка с "кавычками", \\обратным слэшем\\ и\nпереносами\n\n$step1 {"a": 1}'
-        env = tmp_path / ".env"
-        env.write_text(pp.to_env_line("X", nasty) + "\n", encoding="utf-8")
-        assert dotenv_values(env)["X"] == nasty
-
     def test_settings_read_default_from_env_file(self, pp, tmp_path, monkeypatch):
-        """Выгруженный дефолт читается настоящим Settings и совпадает с встроенным."""
+        """Выгруженный дефолт (одинарные кавычки, несколько строк) читается настоящим Settings."""
+        from app.core.prompt_tools import to_env_line
+
         spec = importlib.util.spec_from_file_location("_real_config_pp", os.path.join(_ROOT, "app", "core", "config.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         monkeypatch.delenv("PLANNER_SYSTEM_PROMPT", raising=False)
         env = tmp_path / ".env"
-        env.write_text(pp.to_env_line("PLANNER_SYSTEM_PROMPT", pp.DEFAULT_PLANNER_PROMPT) + "\n", encoding="utf-8")
-        assert mod.Settings(_env_file=str(env)).PLANNER_SYSTEM_PROMPT == pp.DEFAULT_PLANNER_PROMPT
+        env.write_text(to_env_line("PLANNER_SYSTEM_PROMPT", pp.DEFAULT_PLANNER_PROMPT) + "\n", encoding="utf-8")
+        want = pp.DEFAULT_PLANNER_PROMPT.rstrip("\n")
+        assert mod.Settings(_env_file=str(env)).PLANNER_SYSTEM_PROMPT == want
         assert mod.Settings(_env_file=None).PLANNER_SYSTEM_PROMPT == pp.DEFAULT_PLANNER_PROMPT

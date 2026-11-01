@@ -41,7 +41,7 @@ LEGACY_COLLECTION = "corpus"
 
 _ALLOWED_KEYS = {
     "slug", "token", "token_env", "collection", "access", "operator_chat_id",
-    "name", "system_prompt", "model", "welcome", "daily_limit", "total_limit",
+    "name", "system_prompt", "system_prompt_file", "model", "welcome", "daily_limit", "total_limit",
 }
 
 
@@ -58,6 +58,7 @@ class Showcase:
     operator_chat_id: int = 0
     name: str = ""
     system_prompt: str = ""
+    system_prompt_file: str = ""  # путь к файлу с промптом (приоритетнее общего, уступает system_prompt)
     model: str = ""
     welcome: str = ""
     # Суточные лимиты LLM-ответов (UTC): -1 — взять общую настройку, 0 — без ограничения.
@@ -187,7 +188,7 @@ def parse_showcases(raw: str) -> List[Showcase]:
             )
 
         chat = _int(item.get("operator_chat_id", 0), "operator_chat_id", slug)
-        for key in ("name", "system_prompt", "model", "welcome"):
+        for key in ("name", "system_prompt", "system_prompt_file", "model", "welcome"):
             if not isinstance(item.get(key, ""), str):
                 raise ShowcaseConfigError(f"Витрина «{slug}»: {key} должен быть строкой")
         limits = {}
@@ -205,6 +206,7 @@ def parse_showcases(raw: str) -> List[Showcase]:
                 operator_chat_id=chat,
                 name=item.get("name", ""),
                 system_prompt=item.get("system_prompt", ""),
+                system_prompt_file=item.get("system_prompt_file", ""),
                 model=item.get("model", ""),
                 welcome=item.get("welcome", ""),
                 daily_limit=limits["daily_limit"],

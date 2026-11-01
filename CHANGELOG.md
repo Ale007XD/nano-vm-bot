@@ -2,6 +2,21 @@
 
 All notable changes to Alex-Nano-Bot will be documented in this file.
 
+## [1.17.0] - 2026-11-01
+
+### Fixed
+- **Промпт Planner, выгруженный `--print-prompt` в 1.15.0, портился docker compose**: значение было в двойных кавычках, а compose подставляет `$имя` в значениях `env_file` без кавычек и в двойных — `$step1` и `$step_id` превращались в пустую строку («The "step1" variable is not set» при каждом `docker compose`), в примерах оставалось `"text": ""`. Проверка 1.15.0 это пропускала, потому что в промпте оставался `$<id шага>`. Теперь: ссылка должна быть настоящей (`$step1`), пустые `"text": ""`/`"prompt": ""` в примерах отвергаются с подсказкой про compose; `--print-prompt` выводит значение в одинарных кавычках в несколько строк (проверено на docker compose v5 и python-dotenv: `$` и переводы строк читаются буквально)
+- **`migrate_env.py` обрезал многострочные значения** `.env` (строки продолжения терялись): теперь значения в кавычках на несколько строк переносятся дословно
+
+### Added
+- **Промпты из файла**: `PLANNER_SYSTEM_PROMPT_FILE`, `SHOWCASE_SYSTEM_PROMPT_FILE`, поле `system_prompt_file` у витрины в `SHOWCASES`. Без кавычек, `\n` и `$`; правка файла подхватывается без перезапуска (по mtime). Приоритет у витрины: `system_prompt` → её файл → общий файл → `SHOWCASE_SYSTEM_PROMPT` → встроенный; у Planner: файл → `.env` → встроенный. Каждый источник проверяется, отвергнутый (с ошибкой в логе и именем источника) пропускается
+- `python3 scripts/migrate_env.py --print-prompt-text ИМЯ > data/prompts/…` — встроенный промпт как есть, для файла
+- **Предупреждение `migrate_env.py` для любых значений `.env`**, где `$имя` стоит без одинарных кавычек (в том числе пароли и токены): compose их подставит или вырежет. Тест гоняет настоящий `docker compose config` и сверяет, что линтер предупреждает ровно о тех значениях, которые compose действительно меняет
+- Общий модуль `app/core/prompt_tools.py` (чтение файла с кэшем, выбор действующего промпта, запись значения в .env)
+
+### Upgrade
+Если вставляли в `.env` выгруженный 1.15.0 `PLANNER_SYSTEM_PROMPT` в двойных кавычках — он теперь отвергается (ошибка в логе, применяется встроенный). Удалите строку или создайте файл: `mkdir -p data/prompts && python3 scripts/migrate_env.py --print-prompt-text PLANNER_SYSTEM_PROMPT > data/prompts/planner.md`, затем `PLANNER_SYSTEM_PROMPT_FILE=data/prompts/planner.md` в `.env`. Пересоздайте контейнеры (`docker compose up -d --force-recreate`).
+
 ## [1.16.0] - 2026-11-01
 
 ### Added

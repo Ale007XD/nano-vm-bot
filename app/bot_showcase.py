@@ -90,7 +90,7 @@ async def main():
     # проверка системных промптов витрин при старте: ошибки видны сразу, а не на первом вопросе клиента
     for sc in registry:
         try:
-            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT)
+            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT, settings.SHOWCASE_SYSTEM_PROMPT_FILE)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Не удалось проверить промпт витрины «{sc.slug}»: {e}")
 

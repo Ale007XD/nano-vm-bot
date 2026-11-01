@@ -36,15 +36,12 @@ from app.core.planner_prompt import (
     RAG_MARKER,
     validate_planner_prompt,
 )
+from app.core.prompt_tools import read_prompt_file, resolve_prompt
 from app.runtime.llm_adapter import LLMProtocol
 
 logger = logging.getLogger(__name__)
 
 _RAG_MARKER = RAG_MARKER
-
-# Какие невалидные промпты уже отмечены в логе (чтобы не писать ошибку на каждый запрос)
-_reported_prompts: set = set()
-
 
 # Fallback-программа если Planner вернул невалидный JSON
 def _fallback_program(user_input: str) -> Dict[str, Any]:
@@ -88,39 +85,28 @@ class Planner:
             logger.warning("Planner prompt check failed: %s", e)
 
     def _system_prompt(self) -> str:
-        """Промпт из .env (PLANNER_SYSTEM_PROMPT), если в нём есть схема DSL, иначе встроенный.
+        """Действующий промпт: файл (PLANNER_SYSTEM_PROMPT_FILE) -> .env -> встроенный.
 
-        Приложение схему отдельно не передаёт, поэтому промпт без схемы сделал бы каждую
-        программу невалидной (тихая деградация на запасной вариант). Вместо этого —
-        громкая ошибка в логе и встроенный промпт.
+        Приложение схему DSL отдельно не передаёт, поэтому каждый источник проверяется:
+        без схемы программы не проходили бы VM (тихая деградация на запасной вариант). Вместо
+        этого — громкая ошибка в логе и следующий источник.
         """
         try:
             from app.core.config import settings
 
+            file_path = getattr(settings, "PLANNER_SYSTEM_PROMPT_FILE", "")
             env_prompt = getattr(settings, "PLANNER_SYSTEM_PROMPT", "")
         except Exception:
-            env_prompt = ""
-        if not (isinstance(env_prompt, str) and env_prompt.strip()):
-            return DEFAULT_PLANNER_PROMPT
-        if env_prompt == DEFAULT_PLANNER_PROMPT:
-            return env_prompt
-
-        check = validate_planner_prompt(env_prompt)
-        first_time = env_prompt not in _reported_prompts
-        if check.errors:
-            if first_time:
-                _reported_prompts.add(env_prompt)
-                logger.error(
-                    "PLANNER_SYSTEM_PROMPT из .env не содержит схему DSL (%s) — применяется встроенный "
-                    "промпт. Дефолт для правки: python3 scripts/migrate_env.py --print-prompt "
-                    "PLANNER_SYSTEM_PROMPT",
-                    "; ".join(check.errors),
-                )
-            return DEFAULT_PLANNER_PROMPT
-        if check.warnings and first_time:
-            _reported_prompts.add(env_prompt)
-            logger.warning("PLANNER_SYSTEM_PROMPT: %s", "; ".join(check.warnings))
-        return env_prompt
+            file_path, env_prompt = "", ""
+        return resolve_prompt(
+            [
+                (f"файл {file_path}", read_prompt_file(file_path)),
+                ("PLANNER_SYSTEM_PROMPT в .env", env_prompt),
+            ],
+            DEFAULT_PLANNER_PROMPT,
+            validate_planner_prompt,
+            "python3 scripts/migrate_env.py --print-prompt PLANNER_SYSTEM_PROMPT",
+        )
 
     async def generate(
         self,

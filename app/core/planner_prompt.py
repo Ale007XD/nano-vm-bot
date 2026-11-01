@@ -112,7 +112,7 @@ _REQUIRED = (
     ("инструкция respond", r"\brespond\b"),
     ("параметр call_llm «prompt»", r"\bprompt\b"),
     ("параметр respond «text»", r"\btext\b"),
-    ("ссылка на результат шага вида $step1 / $<id шага>", r"\$[<\w{]"),
+    ("ссылка на результат шага вида $step1", r"\$[A-Za-z_]\w*"),
 )
 _OPTIONAL = (
     ("инструкция store_memory (запоминание станет недоступно)", r"\bstore_memory\b"),
@@ -126,11 +126,10 @@ def validate_planner_prompt(text: str) -> PromptCheck:
     """Проверить, что промпт содержит схему DSL, без которой Planner не работает."""
     text = text or ""
     errors = [f"нет описания: {name}" for name, rx in _REQUIRED if not re.search(rx, text, re.S)]
+    if re.search(r'"(?:text|prompt)"\s*:\s*""', text):
+        errors.append(
+            'в примерах пустое значение "text"/"prompt" — похоже, $ссылки вырезал docker compose '
+            "(подставляет $имя в значениях .env без кавычек и в двойных)"
+        )
     warnings = [f"нет описания: {name}" for name, rx in _OPTIONAL if not re.search(rx, text, re.S)]
     return PromptCheck(errors, warnings)
-
-
-def to_env_line(name: str, value: str) -> str:
-    """Значение в виде строки .env: в двойных кавычках, переносы \\n (python-dotenv/pydantic)."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    return f'{name}="{escaped}"'

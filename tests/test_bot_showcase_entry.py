@@ -114,9 +114,9 @@ class TestMain:
     async def test_invalid_showcase_prompt_is_reported_at_startup(self, bs, monkeypatch, caplog):
         import logging
 
-        from app.core import showcase_prompt
+        from app.core import prompt_tools
 
-        showcase_prompt._reported.clear()
+        prompt_tools._reported.clear()
         configure(monkeypatch, ("reklama", "111:AAA"), system_prompt="Ты — остроумный бот.")
         with caplog.at_level(logging.ERROR):
             await bs.main()

@@ -184,6 +184,15 @@ class Settings(BaseSettings):
             "python3 scripts/migrate_env.py --print-prompt SHOWCASE_SYSTEM_PROMPT"
         )
     )
+    SHOWCASE_SYSTEM_PROMPT_FILE: str = Field(
+        default="",
+        description=(
+            "Путь к файлу с системным промптом витрин (относительно /app; том ./data — это data/...). "
+            "Приоритетнее SHOWCASE_SYSTEM_PROMPT; без кавычек и экранирования, правки подхватываются без "
+            "перезапуска. Создать из встроенного: python3 scripts/migrate_env.py --print-prompt-text "
+            "SHOWCASE_SYSTEM_PROMPT > data/prompts/showcase.md"
+        ),
+    )
     CORPUS_CHUNK_SIZE: int = Field(
         default=450,
         description=(
@@ -473,6 +482,15 @@ class Settings(BaseSettings):
         )
     )
     
+    PLANNER_SYSTEM_PROMPT_FILE: str = Field(
+        default="",
+        description=(
+            "Путь к файлу с промптом Planner (приоритетнее PLANNER_SYSTEM_PROMPT; проверяется так же). "
+            "Создать из встроенного: python3 scripts/migrate_env.py --print-prompt-text PLANNER_SYSTEM_PROMPT "
+            "> data/prompts/planner.md"
+        ),
+    )
+
     # Model Parameters
     MAX_TOKENS: int = Field(default=2048, description="Maximum tokens per response")
     TEMPERATURE: float = Field(default=0.7, description="Sampling temperature")
@@ -515,7 +533,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.16.0", description="Application version")
+    APP_VERSION: str = Field(default="1.17.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

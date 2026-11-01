@@ -18,8 +18,11 @@ def sp():
 
 
 @pytest.fixture(autouse=True)
-def _fresh(sp):
-    sp._reported.clear()
+def _fresh():
+    from app.core import prompt_tools
+
+    prompt_tools._reported.clear()
+    prompt_tools._file_cache.clear()
 
 
 PERSONA_ONLY = "Ты — Бот-Помощник. Отвечай вежливо и по делу."
@@ -104,7 +107,7 @@ class TestResolve:
     def test_legacy_showcase_without_slug_has_readable_label(self, sp, caplog):
         with caplog.at_level(logging.ERROR):
             sp.effective_prompt(self.sc(PERSONA_ONLY, slug=""), "")
-        assert "витрина, system_prompt" in caplog.records[0].getMessage()
+        assert "витрина, поле system_prompt" in caplog.records[0].getMessage()
 
 
 class TestSingleSource:

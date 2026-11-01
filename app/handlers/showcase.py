@@ -605,7 +605,7 @@ async def handle_message(message: Message):
         context = "\n\n".join(context_lines)
 
         system_prompt = (
-            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT)
+            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT, settings.SHOWCASE_SYSTEM_PROMPT_FILE)
             + "\n\n"
             + "<b>БАЗА ЗНАНИЙ:</b>\n" + context
         )
