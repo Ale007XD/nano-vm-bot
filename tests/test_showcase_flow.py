@@ -294,6 +294,17 @@ class TestQuestions:
         assert m.answer.await_args.kwargs["reply_markup"] is not None
 
 
+    @pytest.mark.asyncio
+    async def test_limit_check_gets_showcase_and_usage_is_scoped(self, B, monkeypatch):
+        """Потолки витрин работают только если хендлер передал витрину и scope учёта расхода."""
+        await showcase_access.add_member("jurist", 50)
+        monkeypatch.setattr(sc.vector_memory, "search_corpus", AsyncMock(return_value=[]))
+        with showcases.use_showcase(B):
+            await sc.handle_message(msg(50, "вопрос"))
+        assert sc.check_showcase_limit.await_args.args == (50, B)
+        sc.start_usage_session.assert_called_once_with(50, scope="jurist")
+
+
 # ----------------------------- эскалации --------------------------------- #
 class TestOperatorPerShowcase:
     @pytest.mark.asyncio

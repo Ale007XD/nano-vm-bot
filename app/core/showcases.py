@@ -41,7 +41,7 @@ LEGACY_COLLECTION = "corpus"
 
 _ALLOWED_KEYS = {
     "slug", "token", "token_env", "collection", "access", "operator_chat_id",
-    "name", "system_prompt", "model", "welcome",
+    "name", "system_prompt", "model", "welcome", "daily_limit", "total_limit",
 }
 
 
@@ -60,6 +60,15 @@ class Showcase:
     system_prompt: str = ""
     model: str = ""
     welcome: str = ""
+    # Суточные лимиты LLM-ответов (UTC): -1 — взять общую настройку, 0 — без ограничения.
+    # daily_limit — на одного пользователя, total_limit — на витрину в целом (все пользователи)
+    daily_limit: int = -1
+    total_limit: int = -1
+
+    @property
+    def usage_key(self) -> str:
+        """Ключ витрины в счётчиках расхода (у наследной витрины slug пустой)."""
+        return self.slug or "default"
 
     @property
     def bot_id(self) -> int:
@@ -181,6 +190,11 @@ def parse_showcases(raw: str) -> List[Showcase]:
         for key in ("name", "system_prompt", "model", "welcome"):
             if not isinstance(item.get(key, ""), str):
                 raise ShowcaseConfigError(f"Витрина «{slug}»: {key} должен быть строкой")
+        limits = {}
+        for key in ("daily_limit", "total_limit"):
+            limits[key] = _int(item.get(key, -1), key, slug)
+            if limits[key] < -1:
+                raise ShowcaseConfigError(f"Витрина «{slug}»: {key} не может быть отрицательным (0 — без ограничения)")
 
         result.append(
             Showcase(
@@ -193,6 +207,8 @@ def parse_showcases(raw: str) -> List[Showcase]:
                 system_prompt=item.get("system_prompt", ""),
                 model=item.get("model", ""),
                 welcome=item.get("welcome", ""),
+                daily_limit=limits["daily_limit"],
+                total_limit=limits["total_limit"],
             )
         )
 

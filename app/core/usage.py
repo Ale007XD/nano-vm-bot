@@ -19,12 +19,17 @@ logger = logging.getLogger(__name__)
 
 _session_user: ContextVar[Optional[int]] = ContextVar("usage_session_user", default=None)
 _session_accum: ContextVar[Optional[dict]] = ContextVar("usage_session_accum", default=None)
+_session_scope: ContextVar[Optional[str]] = ContextVar("usage_session_scope", default=None)
 
 
-def start_usage_session(telegram_id: int) -> None:
-    """Открыть сессию учёта токенов для пользователя (в начале обработки апдейта)."""
+def start_usage_session(telegram_id: int, scope: Optional[str] = None) -> None:
+    """Открыть сессию учёта токенов для пользователя (в начале обработки апдейта).
+
+    scope — ключ витрины: расход дополнительно учитывается по витрине (потолки витрин).
+    """
     _session_user.set(telegram_id)
     _session_accum.set({})
+    _session_scope.set(scope)
 
 
 def get_session_user() -> Optional[int]:
@@ -58,11 +63,13 @@ def record_usage(usage: Optional[dict]) -> None:
 def _end_session() -> Optional[dict]:
     telegram_id = _session_user.get()
     acc = _session_accum.get()
+    scope = _session_scope.get()
     _session_user.set(None)
     _session_accum.set(None)
+    _session_scope.set(None)
     if telegram_id is None or not acc or not acc.get("requests"):
         return None
-    return {"user_id": telegram_id, **acc}
+    return {"user_id": telegram_id, "scope": scope, **acc}
 
 
 async def flush_usage() -> None:
@@ -79,3 +86,11 @@ async def flush_usage() -> None:
         await add_usage_daily(data["user_id"], data)
     except Exception as e:
         logger.warning(f"Failed to persist usage for {data.get('user_id')}: {e}")
+
+    if data.get("scope"):
+        try:
+            from app.core.showcase_usage import add_usage
+
+            await add_usage(data["scope"], data.get("requests", 0), data.get("total_tokens", 0))
+        except Exception as e:
+            logger.warning(f"Failed to persist showcase usage for {data['scope']}: {e}")

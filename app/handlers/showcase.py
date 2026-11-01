@@ -147,7 +147,7 @@ async def cmd_help(message: Message):
     )
     if is_admin(message.from_user.id):
         text += (
-            "\n\nАдминистратору: /corpus_stats, /corpus_upload (.md/.txt/.zip), /corpus_delete, "
+            "\n\nАдминистратору: /corpus_stats, /corpus_upload (.md/.txt/.zip), /corpus_delete, /showcase_usage, "
             "/invite, /invites, /revoke_invite, /allow, /deny, /members"
         )
     await message.answer(text)
@@ -201,6 +201,46 @@ async def cmd_corpus_delete(message: Message, command: CommandObject = None):
         await message.answer(f"🗑 Документ <b>{html.escape(name)}</b> удалён (чанков: {removed}).")
     else:
         await message.answer(f"Документ «{html.escape(name)}» не найден. Имена — в /corpus_stats.")
+
+
+@router.message(Command("showcase_usage"))
+async def cmd_showcase_usage(message: Message):
+    """Расход LLM-ответов за сегодня (UTC) против потолков: эта витрина и все витрины."""
+    from app.core import showcase_usage
+    from app.handlers.commands import is_admin
+
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return
+
+    sc = current_showcase()
+    try:
+        per_showcase = await showcase_usage.today_all()
+    except Exception as e:
+        logger.error(f"showcase_usage failed: {e}")
+        await message.answer("❌ Не удалось прочитать счётчики расхода.")
+        return
+
+    total_limit = sc.total_limit if sc.total_limit >= 0 else settings.SHOWCASE_TOTAL_DAILY_LIMIT
+    user_limit = sc.daily_limit if sc.daily_limit >= 0 else settings.SHOWCASE_DAILY_LIMIT
+    global_limit = settings.SHOWCASES_GLOBAL_DAILY_LIMIT
+
+    def cap(n: int) -> str:
+        return str(n) if n > 0 else "без потолка"
+
+    mine = per_showcase.get(sc.usage_key, (0, 0))
+    all_requests = sum(r for r, _ in per_showcase.values())
+    all_tokens = sum(t for _, t in per_showcase.values())
+    lines = [
+        "📈 <b>Расход витрин за сегодня (UTC)</b>",
+        f"• эта витрина: <b>{mine[0]}</b> ответов (потолок: {cap(total_limit)}), {mine[1]} токенов",
+        f"• на пользователя: {cap(user_limit)}",
+        f"• все витрины: <b>{all_requests}</b> ответов (потолок: {cap(global_limit)}), {all_tokens} токенов",
+    ]
+    others = sorted((k, v) for k, v in per_showcase.items() if k != sc.usage_key)
+    for key, (req, tok) in others[:10]:
+        lines.append(f"  – {html.escape(key)}: {req} ответов, {tok} токенов")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("corpus_upload"))
@@ -519,7 +559,7 @@ async def handle_message(message: Message):
         return
 
     await _ensure_user(message.from_user.id)
-    limit_check = await check_showcase_limit(message.from_user.id)
+    limit_check = await check_showcase_limit(message.from_user.id, sc)
     if not limit_check.allowed:
         await message.answer(
             limit_check.message,
@@ -532,7 +572,7 @@ async def handle_message(message: Message):
     escalate_kb = call_operator_keyboard() if operator_enabled() else None
     processing_msg = await message.answer("🔍 Ищу в базе знаний…")
     typing_task = start_typing(message.bot, message.chat.id)
-    start_usage_session(message.from_user.id)
+    start_usage_session(message.from_user.id, scope=sc.usage_key)
     try:
         docs = await vector_memory.search_corpus(text, corpus=sc.collection)
 

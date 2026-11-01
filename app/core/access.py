@@ -219,29 +219,61 @@ async def check_daily_limit(telegram_id: int) -> LimitCheck:
     return LimitCheck(True)
 
 
-async def check_showcase_limit(telegram_id: int) -> LimitCheck:
-    """Суточный лимит LLM-ответов витрины (UTC). Админ — безлимит.
+def _int_setting(name: str) -> int:
+    v = getattr(settings, name, 0)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
 
-    Считаются только запросы, дошедшие до LLM (usage_daily.requests): вопросы
-    без ответа в базе знаний лимит не тратят. Сбой БД не блокирует пользователей.
+
+_SHOWCASE_DENIAL = (
+    "⏳ <b>Дневной лимит вопросов исчерпан</b> ({detail}).\n\nЛимит обновится в 00:00 UTC. "
+    "Если вопрос срочный — позовите оператора: /operator."
+)
+
+
+async def check_showcase_limit(telegram_id: int, showcase=None) -> LimitCheck:
+    """Суточные лимиты LLM-ответов витрины (UTC). Админ — безлимит.
+
+    Три уровня: на пользователя (usage_daily.requests, общий для витрин; поле daily_limit
+    витрины переопределяет SHOWCASE_DAILY_LIMIT), на витрину целиком (total_limit /
+    SHOWCASE_TOTAL_DAILY_LIMIT) и на все витрины вместе (SHOWCASES_GLOBAL_DAILY_LIMIT).
+    Считаются только запросы, дошедшие до LLM: вопросы без ответа в базе знаний лимит
+    не тратят. Сбой БД не блокирует пользователей.
     """
     if is_admin(telegram_id):
         return LimitCheck(True)
-    limit = getattr(settings, "SHOWCASE_DAILY_LIMIT", 0)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
-        return LimitCheck(True)
-    try:
-        from app.core.database import get_today_usage
 
-        usage = await get_today_usage(telegram_id)
-        used = int(usage.requests) if usage is not None else 0
-        if used >= limit:
-            return LimitCheck(
-                False,
-                "⏳ <b>Дневной лимит вопросов исчерпан</b> "
-                f"({used}/{limit}).\n\nЛимит обновится в 00:00 UTC. "
-                "Если вопрос срочный — позовите оператора: /operator.",
-            )
-    except Exception as e:
-        logger.warning(f"Showcase limit check failed for {telegram_id}: {e}")
+    user_limit = _int_setting("SHOWCASE_DAILY_LIMIT")
+    total_limit = _int_setting("SHOWCASE_TOTAL_DAILY_LIMIT")
+    if showcase is not None:
+        if showcase.daily_limit >= 0:
+            user_limit = showcase.daily_limit
+        if showcase.total_limit >= 0:
+            total_limit = showcase.total_limit
+    global_limit = _int_setting("SHOWCASES_GLOBAL_DAILY_LIMIT")
+
+    if user_limit > 0:
+        try:
+            from app.core.database import get_today_usage
+
+            usage = await get_today_usage(telegram_id)
+            used = int(usage.requests) if usage is not None else 0
+            if used >= user_limit:
+                return LimitCheck(False, _SHOWCASE_DENIAL.format(detail=f"{used}/{user_limit}"))
+        except Exception as e:
+            logger.warning(f"Showcase limit check failed for {telegram_id}: {e}")
+
+    if showcase is not None and (total_limit > 0 or global_limit > 0):
+        try:
+            from app.core.showcase_usage import today, today_all
+
+            if total_limit > 0:
+                used, _ = await today(showcase.usage_key)
+                if used >= total_limit:
+                    return LimitCheck(False, _SHOWCASE_DENIAL.format(detail="лимит витрины на сегодня"))
+            if global_limit > 0:
+                used_all = sum(r for r, _ in (await today_all()).values())
+                if used_all >= global_limit:
+                    return LimitCheck(False, _SHOWCASE_DENIAL.format(detail="лимит витрин на сегодня"))
+        except Exception as e:
+            logger.warning(f"Showcase cap check failed: {e}")
     return LimitCheck(True)

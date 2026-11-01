@@ -304,6 +304,17 @@ class Settings(BaseSettings):
         default=20, ge=0,
         description="Суточный лимит LLM-ответов витрины на пользователя, UTC-сутки (0 = безлимит; админы не ограничены)"
     )
+    SHOWCASE_TOTAL_DAILY_LIMIT: int = Field(
+        default=0, ge=0,
+        description=(
+            "Суточный потолок LLM-ответов на КАЖДУЮ витрину, все пользователи вместе (UTC; 0 — без потолка). "
+            "Поле total_limit витрины в SHOWCASES переопределяет. Защита от разорения при открытом доступе"
+        ),
+    )
+    SHOWCASES_GLOBAL_DAILY_LIMIT: int = Field(
+        default=0, ge=0,
+        description="Суточный потолок LLM-ответов всех витрин вместе (UTC; 0 — без потолка)",
+    )
     RAG_MEMORIES: int = Field(
         default=10, ge=0, le=50,
         description="Сколько воспоминаний подмешивать в контекст Planner (RAG) на один запрос"
@@ -569,7 +580,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.13.0", description="Application version")
+    APP_VERSION: str = Field(default="1.14.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")
