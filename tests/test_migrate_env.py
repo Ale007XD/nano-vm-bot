@@ -106,7 +106,7 @@ def test_lint_accepts_good_prompts(me):
     mod = me._planner_prompt()
     good = {
         "PLANNER_SYSTEM_PROMPT": mod.to_env_line("PLANNER_SYSTEM_PROMPT", mod.DEFAULT_PLANNER_PROMPT).split("=", 1)[1],
-        "SHOWCASE_SYSTEM_PROMPT": '"Отвечай по блоку БАЗА ЗНАНИЙ"',
+        "SHOWCASE_SYSTEM_PROMPT": mod.to_env_line("X", me._showcase_prompt().DEFAULT_SHOWCASE_PROMPT).split("=", 1)[1],
     }
     assert me.lint(good) == []
 
@@ -144,3 +144,24 @@ def test_print_prompt_roundtrips_through_dotenv(me, tmp_path, monkeypatch, capsy
 def test_lint_reports_missing_schema_parts(me):
     text = " ".join(me.lint({"PLANNER_SYSTEM_PROMPT": '"Ты — Planner. Верни JSON."'}))
     assert "plan" in text and "call_llm" in text and "--print-prompt" in text
+
+
+def test_print_prompt_showcase_roundtrips(me, tmp_path, monkeypatch, capsys):
+    import sys
+
+    from dotenv import dotenv_values
+
+    monkeypatch.setattr(sys, "argv", ["m", "--print-prompt", "SHOWCASE_SYSTEM_PROMPT"])
+    me.main()
+    line = capsys.readouterr().out.strip()
+    env = tmp_path / ".env"
+    env.write_text(line + "\n", encoding="utf-8")
+    assert dotenv_values(env)["SHOWCASE_SYSTEM_PROMPT"] == me._showcase_prompt().DEFAULT_SHOWCASE_PROMPT
+    assert me.lint({"SHOWCASE_SYSTEM_PROMPT": line.split("=", 1)[1]}) == []
+
+
+def test_lint_showcase_prompt_levels(me):
+    persona_only = " ".join(me.lint({"SHOWCASE_SYSTEM_PROMPT": '"Ты — помощник."'}))
+    assert "отвергается" in persona_only and "БАЗА ЗНАНИЙ" in persona_only
+    weak = " ".join(me.lint({"SHOWCASE_SYSTEM_PROMPT": '"Отвечай по базе знаний."'}))
+    assert "отвергается" not in weak and "нет правила" in weak

@@ -27,6 +27,7 @@ from app.core.dialog import history as dialog_history
 from app.core.llm_client_v2 import Message as LLMMessage
 from app.core.llm_client_v2 import llm_client
 from app.core.memory import vector_memory
+from app.core.showcase_prompt import effective_prompt
 from app.core.showcases import ACCESS_INVITE
 from app.core.showcases import current as current_showcase
 from app.core.usage import flush_usage, start_usage_session
@@ -604,7 +605,7 @@ async def handle_message(message: Message):
         context = "\n\n".join(context_lines)
 
         system_prompt = (
-            (sc.system_prompt or settings.SHOWCASE_SYSTEM_PROMPT)
+            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT)
             + "\n\n"
             + "<b>БАЗА ЗНАНИЙ:</b>\n" + context
         )

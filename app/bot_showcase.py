@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.core.logger import setup_logging
 from app.core.memory import vector_memory
+from app.core.showcase_prompt import effective_prompt
 from app.core.showcases import (
     Showcase,
     ShowcaseConfigError,
@@ -85,6 +86,13 @@ async def main():
         logger.error(f"Ошибка конфигурации витрин: {e}")
         raise SystemExit(2)
     set_registry(registry)
+
+    # проверка системных промптов витрин при старте: ошибки видны сразу, а не на первом вопросе клиента
+    for sc in registry:
+        try:
+            effective_prompt(sc, settings.SHOWCASE_SYSTEM_PROMPT)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Не удалось проверить промпт витрины «{sc.slug}»: {e}")
 
     await init_db()
     logger.info("Database initialized")

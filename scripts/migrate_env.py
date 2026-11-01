@@ -98,28 +98,45 @@ def merge(template_lines, old, ):
     return out, kept, added, activated, commented_placeholders, unknown
 
 
-def _planner_prompt():
-    """Общий модуль промпта Planner (грузим по пути: он зависит только от stdlib)."""
+def _load_core(name):
+    """Модуль app/core/<name>.py по пути (они зависят только от stdlib, пакет app не нужен)."""
     import importlib.util
 
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "core", "planner_prompt.py")
-    spec = importlib.util.spec_from_file_location("planner_prompt_shared", path)
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "core", f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"{name}_shared", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-PROMPT_DEFAULTS = {"PLANNER_SYSTEM_PROMPT": "DEFAULT_PLANNER_PROMPT"}
+def _planner_prompt():
+    return _load_core("planner_prompt")
+
+
+def _showcase_prompt():
+    return _load_core("showcase_prompt")
+
+
+# имя переменной -> (модуль, атрибут с дефолтом)
+PROMPT_DEFAULTS = {
+    "PLANNER_SYSTEM_PROMPT": ("planner_prompt", "DEFAULT_PLANNER_PROMPT"),
+    "SHOWCASE_SYSTEM_PROMPT": ("showcase_prompt", "DEFAULT_SHOWCASE_PROMPT"),
+}
+
+
+def _unquote(raw):
+    """Значение как увидит приложение: в двойных кавычках \\n и \\" разворачиваются."""
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        value = value[1:-1].replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+    return value
 
 
 def lint(old):
     warns = []
     planner = old.get("PLANNER_SYSTEM_PROMPT", "")
     if planner.strip().strip("\"'"):
-        # дословно «как увидит приложение»: в двойных кавычках \n и \" разворачиваются
-        value = planner.strip()
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            value = value[1:-1].replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+        value = _unquote(planner)
         check = _planner_prompt().validate_planner_prompt(value)
         if check.errors:
             warns.append(
@@ -131,13 +148,17 @@ def lint(old):
         elif check.warnings:
             warns.append("PLANNER_SYSTEM_PROMPT: " + "; ".join(check.warnings))
     show = old.get("SHOWCASE_SYSTEM_PROMPT", "")
-    if show.strip().strip("\"'") and "БАЗ" not in show.upper():
-        warns.append(
-            "SHOWCASE_SYSTEM_PROMPT не упоминает базу знаний. Поиск по корпусу всегда возвращает "
-            "ближайшие фрагменты (порога релевантности нет), поэтому единственная защита от ответов "
-            "«из головы» — этот промпт. Добавьте правило «отвечай строго по блоку БАЗА ЗНАНИЙ; "
-            "если ответа там нет — так и скажи»."
-        )
+    if show.strip().strip("\"'"):
+        check = _showcase_prompt().validate_showcase_prompt(_unquote(show))
+        if check.errors:
+            warns.append(
+                f"SHOWCASE_SYSTEM_PROMPT отвергается приложением ({'; '.join(check.errors)}): применится "
+                "встроенный промпт, в логе ошибка. Поиск по корпусу всегда возвращает ближайшие фрагменты "
+                "(порога релевантности нет), единственная защита от ответов «из головы» — этот промпт. "
+                "Дефолт для правки: python3 scripts/migrate_env.py --print-prompt SHOWCASE_SYSTEM_PROMPT"
+            )
+        elif check.warnings:
+            warns.append("SHOWCASE_SYSTEM_PROMPT: " + "; ".join(check.warnings))
     emb = old.get("EMBEDDING_MODEL", "").strip("\"'")
     if emb == "sentence-transformers/all-MiniLM-L6-v2":
         warns.append(
@@ -178,8 +199,8 @@ def main():
     a = ap.parse_args()
 
     if a.print_prompt:
-        mod = _planner_prompt()
-        print(mod.to_env_line(a.print_prompt, getattr(mod, PROMPT_DEFAULTS[a.print_prompt])))
+        module, attr = PROMPT_DEFAULTS[a.print_prompt]
+        print(_planner_prompt().to_env_line(a.print_prompt, getattr(_load_core(module), attr)))
         return
 
     for p in (a.old, a.template):

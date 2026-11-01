@@ -111,6 +111,18 @@ class TestMain:
         assert all(b.session.close.await_count == 1 for b in FakeBot.created)
 
     @pytest.mark.asyncio
+    async def test_invalid_showcase_prompt_is_reported_at_startup(self, bs, monkeypatch, caplog):
+        import logging
+
+        from app.core import showcase_prompt
+
+        showcase_prompt._reported.clear()
+        configure(monkeypatch, ("reklama", "111:AAA"), system_prompt="Ты — остроумный бот.")
+        with caplog.at_level(logging.ERROR):
+            await bs.main()
+        assert any("отвергнут" in r.getMessage() and "reklama" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_one_broken_token_does_not_stop_the_other(self, bs, monkeypatch):
         FakeBot.broken.add("111:AAA")
         configure(monkeypatch, ("reklama", "111:AAA"), ("jurist", "222:BBB"))

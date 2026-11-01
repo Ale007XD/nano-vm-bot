@@ -30,9 +30,9 @@ def build_registry():
 
     items = [
         {"slug": "reklama", "token": "111:AAA", "collection": "corpus", "operator_chat_id": GROUP_A,
-         "name": "Наружная реклама", "system_prompt": "ПРОМПТ-РЕКЛАМА", "model": "model-a"},
+         "name": "Наружная реклама", "system_prompt": "ПРОМПТ-РЕКЛАМА. Отвечай по базе знаний.", "model": "model-a"},
         {"slug": "jurist", "token": "222:BBB", "operator_chat_id": GROUP_B,
-         "system_prompt": "ПРОМПТ-ЮРИСТ", "model": "model-b", "welcome": "Здравствуйте, юрист на связи."},
+         "system_prompt": "ПРОМПТ-ЮРИСТ. Отвечай по базе знаний.", "model": "model-b", "welcome": "Здравствуйте, юрист на связи."},
     ]
     return showcases.ShowcaseRegistry(showcases.parse_showcases(json.dumps(items)))
 
@@ -71,7 +71,7 @@ def env(monkeypatch, sm):
     st = sys.modules["app.core.config"].settings
     monkeypatch.setattr(st, "ADMIN_IDS", [ADMIN])
     monkeypatch.setattr(st, "BOT_TIMEZONE", "UTC")
-    monkeypatch.setattr(st, "SHOWCASE_SYSTEM_PROMPT", "ПРОМПТ-ПО-УМОЛЧАНИЮ")
+    monkeypatch.setattr(st, "SHOWCASE_SYSTEM_PROMPT", "ПРОМПТ-ПО-УМОЛЧАНИЮ. Отвечай по базе знаний.")
     monkeypatch.setattr(st, "SHOWCASE_MODEL", "model-default")
     monkeypatch.setattr(st, "CORPUS_TOP_K", 5)
     db = sys.modules["app.core.database"]
@@ -251,6 +251,23 @@ class TestQuestions:
         assert first.kwargs["model"] == "model-a" and "ПРОМПТ-РЕКЛАМА" in first.args[0][0].content
         assert second.kwargs["model"] == "model-b" and "ПРОМПТ-ЮРИСТ" in second.args[0][0].content
         assert "ПРОМПТ-РЕКЛАМА" not in second.args[0][0].content
+
+    @pytest.mark.asyncio
+    async def test_prompt_without_knowledge_block_never_reaches_the_llm(self, B, monkeypatch, caplog):
+        """Битый промпт витрины (персона без привязки к базе) заменяется: LLM получает безопасный."""
+        import dataclasses
+
+        await showcase_access.add_member("jurist", 50)
+        broken = dataclasses.replace(B, system_prompt="Ты — остроумный бот-помощник.")
+        monkeypatch.setattr(sc.vector_memory, "search_corpus", AsyncMock(return_value=[doc("faq")]))
+        llm = AsyncMock(return_value=SimpleNamespace(content="ответ"))
+        monkeypatch.setattr(sc.llm_client, "chat_with_fallback", llm)
+        with showcases.use_showcase(broken):
+            await sc.handle_message(msg(50, "вопрос"))
+        system = llm.await_args.args[0][0].content
+        assert "остроумный" not in system
+        assert "ПРОМПТ-ПО-УМОЛЧАНИЮ" in system  # валидный env-промпт из фикстуры
+        assert "БАЗА ЗНАНИЙ:" in system
 
     @pytest.mark.asyncio
     async def test_non_member_is_refused_before_any_search(self, B, monkeypatch):
