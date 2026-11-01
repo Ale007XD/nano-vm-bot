@@ -260,6 +260,7 @@ class Settings(BaseSettings):
         description="Пускать в бота участников пространств (семья/фирма/класс), не только ADMIN_IDS и открытый доступ"
     )
     SPACE_MAX_MEMBERS: int = Field(default=20, ge=1, le=1000, description="Максимум участников в одном пространстве")
+    SPACE_REMINDER_POLL_SECONDS: int = Field(default=15, ge=1, le=300, description="Как часто (сек) проверять созревшие напоминания пространств; доставка может опоздать на этот интервал")
     SPACE_INVITE_TTL_DAYS: int = Field(default=7, ge=1, le=365, description="Срок действия приглашения в пространство, дней")
     RAG_MEMORIES: int = Field(
         default=10, ge=0, le=50,
@@ -539,7 +540,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.19.0", description="Application version")
+    APP_VERSION: str = Field(default="1.20.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

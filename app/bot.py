@@ -89,6 +89,11 @@ async def on_startup(bot: Bot):
     logger.info("Starting task scheduler...")
     task_scheduler.set_bot(bot)
     task_scheduler.start()
+
+    # Напоминания пространств (семья/фирма/класс): свой исполнитель, не APScheduler
+    from app.spaces import runner as space_runner
+
+    space_runner.start(bot)
     
     # Set bot commands
     commands = [
@@ -170,6 +175,10 @@ async def on_shutdown(bot: Bot):
     # Shutdown scheduler
     logger.info("Shutting down scheduler...")
     task_scheduler.shutdown()
+
+    from app.spaces import runner as space_runner
+
+    await space_runner.stop()
 
     logger.info("Bot stopped")
 

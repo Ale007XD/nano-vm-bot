@@ -66,6 +66,25 @@ class SpaceScope:
         async with self._maker()() as s:
             return int((await s.execute(q)).scalar_one())
 
+    async def rows(self, model, *columns, where=(), group_by=(), order_by=()) -> List[Any]:
+        """Произвольная выборка колонок (агрегаты, GROUP BY) с обязательным фильтром по пространству."""
+        _check_model(model)
+        q = select(*columns).select_from(model).where(model.space_id == self.space_id, *where)
+        if group_by:
+            q = q.group_by(*group_by)
+        if order_by:
+            q = q.order_by(*order_by)
+        async with self._maker()() as s:
+            return list((await s.execute(q)).all())
+
+    async def delete_where(self, model, *where) -> int:
+        """Удалить записи пространства по условию; возвращает число удалённых."""
+        _check_model(model)
+        async with self._maker()() as s:
+            res = await s.execute(delete(model).where(model.space_id == self.space_id, *where))
+            await s.commit()
+            return int(res.rowcount or 0)
+
     async def add(self, obj) -> Any:
         _check_model(type(obj))
         current = getattr(obj, "space_id", None)
