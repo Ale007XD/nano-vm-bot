@@ -103,8 +103,9 @@ def test_lint_flags_bad_planner_and_showcase_prompts(me):
 
 
 def test_lint_accepts_good_prompts(me):
+    mod = me._planner_prompt()
     good = {
-        "PLANNER_SYSTEM_PROMPT": '"{\\"plan\\": [call_llm respond params]}"',
+        "PLANNER_SYSTEM_PROMPT": mod.to_env_line("PLANNER_SYSTEM_PROMPT", mod.DEFAULT_PLANNER_PROMPT).split("=", 1)[1],
         "SHOWCASE_SYSTEM_PROMPT": '"Отвечай по блоку БАЗА ЗНАНИЙ"',
     }
     assert me.lint(good) == []
@@ -123,3 +124,23 @@ def test_lint_large_corpus_chunk_with_small_window_model(me):
     big_ok = {"CORPUS_CHUNK_SIZE": "1200", "EMBEDDING_MODEL": "intfloat/multilingual-e5-large",
               "BOT_MEM_LIMIT": "3500m", "SHOWCASE_MEM_LIMIT": "3500m"}
     assert not [w for w in me.lint(big_ok) if "CORPUS_CHUNK" in w]
+
+
+def test_print_prompt_roundtrips_through_dotenv(me, tmp_path, monkeypatch, capsys):
+    import sys
+
+    from dotenv import dotenv_values
+
+    monkeypatch.setattr(sys, "argv", ["m", "--print-prompt", "PLANNER_SYSTEM_PROMPT"])
+    me.main()
+    line = capsys.readouterr().out.strip()
+    env = tmp_path / ".env"
+    env.write_text(line + "\n", encoding="utf-8")
+    assert dotenv_values(env)["PLANNER_SYSTEM_PROMPT"] == me._planner_prompt().DEFAULT_PLANNER_PROMPT
+    # выгруженный дефолт линтер считает корректным
+    assert me.lint({"PLANNER_SYSTEM_PROMPT": line.split("=", 1)[1]}) == []
+
+
+def test_lint_reports_missing_schema_parts(me):
+    text = " ".join(me.lint({"PLANNER_SYSTEM_PROMPT": '"Ты — Planner. Верни JSON."'}))
+    assert "plan" in text and "call_llm" in text and "--print-prompt" in text

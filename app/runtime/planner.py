@@ -31,102 +31,19 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from app.core.planner_prompt import (
+    DEFAULT_PLANNER_PROMPT,
+    RAG_MARKER,
+    validate_planner_prompt,
+)
 from app.runtime.llm_adapter import LLMProtocol
 
 logger = logging.getLogger(__name__)
 
-_RAG_MARKER = "[СИСТЕМНЫЙ КОНТЕКСТ: ИЗВЕСТНЫЕ ФАКТЫ / ВОСПОМИНАНИЯ]"
+_RAG_MARKER = RAG_MARKER
 
-# ---------------------------------------------------------------------------
-# System prompt для Planner LLM
-# ---------------------------------------------------------------------------
-
-_PLANNER_SYSTEM = """\
-Ты — Planner, компонент детерминированного AI-рантайма.
-Твоя единственная задача: преобразовать запрос пользователя в JSON-программу.
-
-ДОСТУПНЫЕ ИНСТРУКЦИИ:
-- call_llm    params: {prompt: str, role?: str, system?: str}
-- respond     params: {text: str}   — текст или $ref на output предыдущего шага
-- store_memory params: {content: str, memory_type?: str}
-
-ПРАВИЛА:
-1. Всегда возвращай ТОЛЬКО валидный JSON.
-2. Каждый шаг имеет уникальный id (step1, step2, ...).
-3. Последний шаг ВСЕГДА "respond" с text = $<id предыдущего шага>.
-4. store_memory добавляй только если пользователь просит запомнить факт.
-5. КРИТИЧЕСКИ ВАЖНО: Если в тексте "ЗАПРОС ПОЛЬЗОВАТЕЛЯ" присутствует блок, начинающийся с "[СИСТЕМНЫЙ КОНТЕКСТ: ИЗВЕСТНЫЕ ФАКТЫ / ВОСПОМИНАНИЯ]", ты ОБЯЗАН скопировать весь этот блок в параметр `system` внутри инструкции `call_llm`. Сам вопрос пользователя помести в `prompt`. Никогда не игнорируй системный контекст!
-
-ПРИМЕР (вопрос с контекстом):
-ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
-Что я просил запомнить?
-[СИСТЕМНЫЙ КОНТЕКСТ: ИЗВЕСТНЫЕ ФАКТЫ / ВОСПОМИНАНИЯ]
-- Сообщение 2
-
-ОТВЕТ PLANNER:
-{
-  "plan": [
-    {
-      "id": "step1",
-      "instruction": "call_llm",
-      "on_error": "abort",
-      "params": {
-        "prompt": "Что я просил запомнить?",
-        "system": "[СИСТЕМНЫЙ КОНТЕКСТ: ИЗВЕСТНЫЕ ФАКТЫ / ВОСПОМИНАНИЯ]\\n- Сообщение 2",
-        "role": "default"
-      }
-    },
-    {
-      "id": "step2",
-      "instruction": "respond",
-      "on_error": "continue",
-      "params": {"text": "$step1"}
-    }
-  ]
-}
-
-ПРИМЕР (простой вопрос):
-{
-  "plan": [
-    {
-      "id": "step1",
-      "instruction": "call_llm",
-      "on_error": "abort",
-      "params": {"prompt": "Как работает asyncio?", "role": "default"}
-    },
-    {
-      "id": "step2",
-      "instruction": "respond",
-      "on_error": "continue",
-      "params": {"text": "$step1"}
-    }
-  ]
-}
-
-ПРИМЕР (запомнить факт):
-{
-  "plan": [
-    {
-      "id": "step1",
-      "instruction": "call_llm",
-      "on_error": "abort",
-      "params": {"prompt": "Подтверди что запомнил: люблю Python", "role": "default"}
-    },
-    {
-      "id": "step2",
-      "instruction": "store_memory",
-      "on_error": "continue",
-      "params": {"content": "Пользователь любит Python", "memory_type": "note"}
-    },
-    {
-      "id": "step3",
-      "instruction": "respond",
-      "on_error": "continue",
-      "params": {"text": "$step1"}
-    }
-  ]
-}
-"""
+# Какие невалидные промпты уже отмечены в логе (чтобы не писать ошибку на каждый запрос)
+_reported_prompts: set = set()
 
 
 # Fallback-программа если Planner вернул невалидный JSON
@@ -165,18 +82,45 @@ class Planner:
 
     def __init__(self, llm: LLMProtocol):
         self._llm = llm
+        try:
+            self._system_prompt()  # проверка промпта сразу при старте, а не на первом запросе
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Planner prompt check failed: %s", e)
 
     def _system_prompt(self) -> str:
-        """Промпт из .env (PLANNER_SYSTEM_PROMPT), иначе встроенный."""
+        """Промпт из .env (PLANNER_SYSTEM_PROMPT), если в нём есть схема DSL, иначе встроенный.
+
+        Приложение схему отдельно не передаёт, поэтому промпт без схемы сделал бы каждую
+        программу невалидной (тихая деградация на запасной вариант). Вместо этого —
+        громкая ошибка в логе и встроенный промпт.
+        """
         try:
             from app.core.config import settings
 
             env_prompt = getattr(settings, "PLANNER_SYSTEM_PROMPT", "")
         except Exception:
             env_prompt = ""
-        if isinstance(env_prompt, str) and env_prompt.strip():
+        if not (isinstance(env_prompt, str) and env_prompt.strip()):
+            return DEFAULT_PLANNER_PROMPT
+        if env_prompt == DEFAULT_PLANNER_PROMPT:
             return env_prompt
-        return _PLANNER_SYSTEM
+
+        check = validate_planner_prompt(env_prompt)
+        first_time = env_prompt not in _reported_prompts
+        if check.errors:
+            if first_time:
+                _reported_prompts.add(env_prompt)
+                logger.error(
+                    "PLANNER_SYSTEM_PROMPT из .env не содержит схему DSL (%s) — применяется встроенный "
+                    "промпт. Дефолт для правки: python3 scripts/migrate_env.py --print-prompt "
+                    "PLANNER_SYSTEM_PROMPT",
+                    "; ".join(check.errors),
+                )
+            return DEFAULT_PLANNER_PROMPT
+        if check.warnings and first_time:
+            _reported_prompts.add(env_prompt)
+            logger.warning("PLANNER_SYSTEM_PROMPT: %s", "; ".join(check.warnings))
+        return env_prompt
 
     async def generate(
         self,

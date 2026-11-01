@@ -98,20 +98,38 @@ def merge(template_lines, old, ):
     return out, kept, added, activated, commented_placeholders, unknown
 
 
+def _planner_prompt():
+    """Общий модуль промпта Planner (грузим по пути: он зависит только от stdlib)."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "core", "planner_prompt.py")
+    spec = importlib.util.spec_from_file_location("planner_prompt_shared", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+PROMPT_DEFAULTS = {"PLANNER_SYSTEM_PROMPT": "DEFAULT_PLANNER_PROMPT"}
+
+
 def lint(old):
     warns = []
     planner = old.get("PLANNER_SYSTEM_PROMPT", "")
     if planner.strip().strip("\"'"):
-        # кавычки в .env могут быть экранированы (\"plan\"), поэтому ищем слова, а не "plan"
-        need = {"plan": r"\bplan\b", "call_llm": r"\bcall_llm\b", "respond": r"\brespond\b", "params": r"\bparams\b"}
-        missing = [name for name, rx in need.items() if not re.search(rx, planner)]
-        if missing:
+        # дословно «как увидит приложение»: в двойных кавычках \n и \" разворачиваются
+        value = planner.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1].replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+        check = _planner_prompt().validate_planner_prompt(value)
+        if check.errors:
             warns.append(
                 "PLANNER_SYSTEM_PROMPT ЗАМЕНЯЕТ встроенный промпт целиком, но не содержит схему DSL "
-                f"(нет: {', '.join(missing)}). Приложение схему отдельно не передаёт — Planner не знает "
-                "имён параметров (prompt/text/content...), программы не проходят и работает "
-                "запасной вариант. Уберите переменную — применится встроенный промпт."
+                f"({'; '.join(check.errors)}). Приложение схему отдельно не передаёт, поэтому такой "
+                "промпт игнорируется (применяется встроенный, в логе ошибка). Уберите переменную или "
+                "возьмите дефолт для правки: python3 scripts/migrate_env.py --print-prompt PLANNER_SYSTEM_PROMPT"
             )
+        elif check.warnings:
+            warns.append("PLANNER_SYSTEM_PROMPT: " + "; ".join(check.warnings))
     show = old.get("SHOWCASE_SYSTEM_PROMPT", "")
     if show.strip().strip("\"'") and "БАЗ" not in show.upper():
         warns.append(
@@ -153,7 +171,16 @@ def main():
     ap.add_argument("--old", default=".env")
     ap.add_argument("--template", default=".env.example")
     ap.add_argument("--out", default=".env.new")
+    ap.add_argument(
+        "--print-prompt", metavar="ИМЯ", choices=sorted(PROMPT_DEFAULTS),
+        help="вывести встроенный промпт в формате строки .env (для правки): " + ", ".join(sorted(PROMPT_DEFAULTS)),
+    )
     a = ap.parse_args()
+
+    if a.print_prompt:
+        mod = _planner_prompt()
+        print(mod.to_env_line(a.print_prompt, getattr(mod, PROMPT_DEFAULTS[a.print_prompt])))
+        return
 
     for p in (a.old, a.template):
         if not os.path.isfile(p):
