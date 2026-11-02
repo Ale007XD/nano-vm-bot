@@ -73,20 +73,28 @@ def category_names(kind: str, settings: Optional[dict] = None) -> List[str]:
     return list(DEFAULT_CATEGORIES.get(kind, DEFAULT_CATEGORIES["generic"]))
 
 
-async def ensure_categories(scope: SpaceScope, space_kind: str, space_settings: Optional[dict] = None) -> List[Category]:
-    """Создать недостающие категории расходов (идемпотентно)."""
-    have = {c.name_key for c in await scope.list(Category, Category.kind == "expense")}
-    for n, name in enumerate(category_names(space_kind, space_settings)):
+async def ensure_categories(
+    scope: SpaceScope, space_kind: str, space_settings: Optional[dict] = None, *,
+    kind: str = "expense", names: Optional[List[str]] = None,
+) -> List[Category]:
+    """Создать недостающие категории (идемпотентно). kind — «expense» или ключ показателя;
+    names — свой список (для показателей), иначе набор расходов по виду пространства."""
+    wanted = names if names is not None else category_names(space_kind, space_settings)
+    have = {c.name_key for c in await scope.list(Category, Category.kind == kind)}
+    for n, name in enumerate(wanted):
         if name.casefold() not in have:
             have.add(name.casefold())
-            await scope.add(Category(kind="expense", name=name, name_key=name.casefold(), sort=n))
-    return await scope.list(Category, Category.kind == "expense", order_by=(Category.sort, Category.id))
+            await scope.add(Category(kind=kind, name=name, name_key=name.casefold(), sort=n))
+    return await scope.list(Category, Category.kind == kind, order_by=(Category.sort, Category.id))
 
 
-async def resolve_category(scope: SpaceScope, name: Optional[str]) -> Category:
-    """Категория по названию (без регистра; точное совпадение, затем по началу слова),
-    иначе «Прочее». Новые категории из текста LLM не создаются — список задаёт пространство."""
-    cats = await scope.list(Category, Category.kind == "expense", order_by=(Category.sort, Category.id))
+async def resolve_category(
+    scope: SpaceScope, name: Optional[str], *, kind: str = "expense", fallback: bool = True
+) -> Optional[Category]:
+    """Категория по названию (без регистра; точное совпадение, затем по началу слова).
+    Не найдена: для расходов — «Прочее» (fallback), для остальных показателей — None.
+    Новые категории из текста LLM не создаются — список задаёт пространство."""
+    cats = await scope.list(Category, Category.kind == kind, order_by=(Category.sort, Category.id))
     key = (name or "").strip().casefold()
     if key:
         for c in cats:
@@ -95,10 +103,12 @@ async def resolve_category(scope: SpaceScope, name: Optional[str]) -> Category:
         for c in cats:
             if len(key) >= 3 and (c.name_key.startswith(key) or key.startswith(c.name_key)):
                 return c
+    if not fallback:
+        return None
     for c in cats:
         if c.name_key == FALLBACK_CATEGORY.casefold():
             return c
-    return await scope.add(Category(kind="expense", name=FALLBACK_CATEGORY,
+    return await scope.add(Category(kind=kind, name=FALLBACK_CATEGORY,
                                     name_key=FALLBACK_CATEGORY.casefold(), sort=999))
 
 
@@ -112,11 +122,12 @@ async def add_entry(
     stored — уже готовое целое ×100); occurred_at — UTC (naive) или aware."""
     if occurred_at is not None and occurred_at.tzinfo is not None:
         occurred_at = occurred_at.astimezone(timezone.utc).replace(tzinfo=None)
-    cat = await resolve_category(scope, category)
+    is_expense = metric == "expense"
+    cat = await resolve_category(scope, category, kind="expense" if is_expense else metric, fallback=is_expense)
     return await scope.add(LedgerEntry(
         author_id=scope.user_id, metric=metric, amount_minor=stored if stored is not None else to_minor(amount),
         currency=(currency.upper() if metric == "expense" else currency)[:8],  # единицы вроде «шт» — как заданы
-        category_id=cat.id, note=" ".join((note or "").split())[:200],
+        category_id=cat.id if cat else None, note=" ".join((note or "").split())[:200],
         occurred_at=occurred_at or _now(), source="voice" if source == "voice" else "text",
         raw_text=(raw_text or "")[:2000],
     ))
@@ -211,7 +222,8 @@ async def summarize(
         by_cat = await scope.rows(LedgerEntry, LedgerEntry.category_id, func.sum(LedgerEntry.amount_minor),
                                   where=base, group_by=(LedgerEntry.category_id,),
                                   order_by=(func.sum(LedgerEntry.amount_minor).desc(),))
-        s.by_category = [(names.get(cid, FALLBACK_CATEGORY), int(v)) for cid, v in by_cat]
+        if any(cid is not None for cid, _ in by_cat):  # у показателей без категорий блока нет
+            s.by_category = [(names.get(cid, "Без категории"), int(v)) for cid, v in by_cat]
         by_auth = await scope.rows(LedgerEntry, LedgerEntry.author_id, func.sum(LedgerEntry.amount_minor),
                                    where=base, group_by=(LedgerEntry.author_id,),
                                    order_by=(func.sum(LedgerEntry.amount_minor).desc(),))

@@ -16,6 +16,7 @@ from app.spaces import ledger
 EXPENSE = "expense"
 KINDS = ("money", "count")
 MAX_METRICS = 20
+MAX_CATEGORIES = 30
 MAX_VALUE = Decimal(10) ** 9
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
@@ -26,6 +27,7 @@ class Metric:
     title: str
     unit: str  # валюта (money) или единица («шт», «ч»)
     kind: str = "count"
+    categories: Tuple[str, ...] = ()  # необязательный список категорий показателя
 
 
 def default_expense(currency: str) -> Metric:
@@ -54,8 +56,13 @@ def parse_metrics(raw: Any) -> Tuple[List[Metric], List[str]]:
         elif not title or not unit or kind not in KINDS:
             errors.append(f"metrics[{i}] ({key}): нужны title, unit (до 8 символов) и kind money|count")
         else:
+            raw_cats = it.get("categories")
+            cats = tuple(dict.fromkeys(
+                " ".join(str(c).split())[:50] for c in raw_cats if str(c).strip())) if isinstance(raw_cats, list) else ()
+            if len(cats) > MAX_CATEGORIES:
+                errors.append(f"metrics[{i}] ({key}): категорий больше {MAX_CATEGORIES} — лишние отброшены")
             seen.add(key)
-            out.append(Metric(key, title, unit, kind))
+            out.append(Metric(key, title, unit, kind, cats[:MAX_CATEGORIES]))
     if len(raw) > MAX_METRICS:
         errors.append(f"показателей больше {MAX_METRICS} — лишние отброшены")
     return out, errors

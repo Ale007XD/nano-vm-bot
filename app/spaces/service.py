@@ -120,6 +120,25 @@ async def update_settings(space_id: int, patch: Dict[str, Any], session_maker=No
         return True
 
 
+async def replace_settings(
+    space_id: int, settings: Dict[str, Any], *, timezone_name: Optional[str] = None,
+    currency: Optional[str] = None, session_maker=None,
+) -> bool:
+    """Заменить settings целиком (после проверки в `config`) и, если заданы, часовой пояс/валюту."""
+    sm = resolve_session_maker(session_maker)
+    async with sm() as s:
+        space = await s.get(Space, space_id)
+        if space is None:
+            return False
+        space.settings = dict(settings)
+        if timezone_name:
+            space.timezone = timezone_name
+        if currency:
+            space.currency = currency.upper()[:8]
+        await s.commit()
+        return True
+
+
 async def deactivate_space(space_id: int, session_maker=None) -> bool:
     """Выключить пространство: участники теряют доступ, данные сохраняются."""
     sm = resolve_session_maker(session_maker)

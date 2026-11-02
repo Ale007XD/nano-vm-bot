@@ -22,7 +22,7 @@ import pytz
 from sqlalchemy import delete
 
 from app.core.ext_db import resolve_session_maker
-from app.spaces import checklists, ledger, personal, reminders, service
+from app.spaces import checklists, ledger, metrics, personal, reminders, service
 from app.spaces.models import IntakePending, Space
 from app.spaces.repo import SpaceScope
 
@@ -73,6 +73,19 @@ class ExpenseP:
     type: str = "expense"
 
 
+@dataclass
+class RecordP:
+    """Значение своего показателя (проданные штуки, часы…)."""
+
+    metric: str = ""
+    stored: int = 0  # ×100
+    unit: str = ""
+    category: str = ""
+    note: str = ""
+    occurred_at: Optional[str] = None  # UTC naive ISO
+    type: str = "record"
+
+
 Proposal = Any
 
 
@@ -90,6 +103,25 @@ class Context:
     kind: str
     members: Dict[int, str]  # telegram id -> имя
     categories: List[str]
+    metrics: Dict[str, "metrics.Metric"] = field(default_factory=dict)  # свои показатели (без расходов)
+
+
+def _metrics_prompt(ctx: Context) -> str:
+    if not ctx.metrics:
+        return ""
+    lines = []
+    for m in ctx.metrics.values():
+        cats = f"; категории: {', '.join(m.categories)}" if m.categories else ""
+        lines.append(f"  {m.key} — {m.title} ({m.unit}{cats})")
+    return "\nПоказатели для type=record:\n" + "\n".join(lines)
+
+
+def _record_line(ctx: Context) -> str:
+    if not ctx.metrics:
+        return ""
+    return ('- значение показателя: {"type":"record","metric":"ключ из списка показателей","value":число,'
+            '"category":"категория показателя или null","note":"коротко","date":"YYYY-MM-DD или null"}\n'
+            "  Используй только ключи из списка показателей; расходы денег — всегда type=expense.\n")
 
 
 def build_system_prompt(ctx: Context) -> str:
@@ -101,7 +133,7 @@ def build_system_prompt(ctx: Context) -> str:
 Сейчас: {now:%Y-%m-%d %H:%M}, {WEEKDAYS_SHORT[now.weekday()]}, часовой пояс {ctx.tz}.
 Участники: {names}.
 Категории расходов: {", ".join(ctx.categories)}.
-Валюта по умолчанию: {ctx.currency}.
+Валюта по умолчанию: {ctx.currency}.{_metrics_prompt(ctx)}
 
 Формат ответа:
 {{"items": [ ... ]}}
@@ -112,6 +144,7 @@ def build_system_prompt(ctx: Context) -> str:
 - покупки: {{"type":"shopping","items":[{{"text":"продукт","qty":"количество или пусто"}}]}}
 - расход: {{"type":"expense","amount":число,"currency":"код или null","category":"одна из категорий","note":"коротко на что","date":"YYYY-MM-DD или null"}}
 
+{_record_line(ctx)}
 Правила:
 1. Одно сообщение может содержать несколько элементов.
 2. Если сообщение не про дела, покупки или траты — верни {{"items": []}}.
@@ -257,6 +290,21 @@ def _shopping(it: dict, notes: List[str]) -> Optional[ShoppingP]:
     return ShoppingP(items=out) if out else None
 
 
+def _occurred(it: dict, ctx: Context, notes: List[str]) -> datetime:
+    """Дата записи из `date` (не старше года и не позже завтра), иначе «сейчас»."""
+    zone = pytz.timezone(ctx.tz)
+    raw_date = str(it.get("date") or "").strip()
+    if raw_date:
+        try:
+            when = zone.localize(datetime.strptime(raw_date, "%Y-%m-%d").replace(hour=12))
+            if ctx.now_local - timedelta(days=366) <= when <= ctx.now_local + timedelta(days=1):
+                return when
+            notes.append(f"дата {raw_date} вне разумных границ — записал сегодняшним числом")
+        except ValueError:
+            notes.append("не понял дату — записал сегодняшним числом")
+    return ctx.now_local
+
+
 def _expense(it: dict, ctx: Context, notes: List[str]) -> Optional[ExpenseP]:
     try:
         minor = ledger.to_minor(it.get("amount"))
@@ -265,21 +313,27 @@ def _expense(it: dict, ctx: Context, notes: List[str]) -> Optional[ExpenseP]:
         return None
     cur = str(it.get("currency") or "").strip().upper()
     cur = cur if re.fullmatch(r"[A-Z]{3}", cur) else ctx.currency
-    zone = pytz.timezone(ctx.tz)
-    occurred = ctx.now_local
-    raw_date = str(it.get("date") or "").strip()
-    if raw_date:
-        try:
-            d = datetime.strptime(raw_date, "%Y-%m-%d")
-            when = zone.localize(d.replace(hour=12))
-            if ctx.now_local - timedelta(days=366) <= when <= ctx.now_local + timedelta(days=1):
-                occurred = when
-            else:
-                notes.append(f"дата {raw_date} вне разумных границ — записал сегодняшним числом")
-        except ValueError:
-            notes.append("не понял дату расхода — записал сегодняшним числом")
     return ExpenseP(amount_minor=minor, currency=cur, category=_s(it.get("category"), 50),
-                    note=_s(it.get("note"), 200), occurred_at=_to_utc_naive(occurred))
+                    note=_s(it.get("note"), 200), occurred_at=_to_utc_naive(_occurred(it, ctx, notes)))
+
+
+def _record(it: dict, ctx: Context, notes: List[str]) -> Optional[RecordP]:
+    m = ctx.metrics.get(str(it.get("metric") or "").strip().lower())
+    if m is None:
+        notes.append("такого показателя нет в настройках — запись пропущена")
+        return None
+    try:
+        stored = metrics.to_stored(m, it.get("value"))
+    except ledger.LedgerError as e:
+        notes.append(f"«{m.title}» не записано: {e}")
+        return None
+    cat = _s(it.get("category"), 50)
+    if m.categories:  # неизвестную категорию не придумываем — запись без категории
+        cat = next((c for c in m.categories if c.casefold() == cat.casefold()), "")
+    else:
+        cat = ""
+    return RecordP(metric=m.key, stored=stored, unit=m.unit, category=cat, note=_s(it.get("note"), 200),
+                   occurred_at=_to_utc_naive(_occurred(it, ctx, notes)))
 
 
 def parse_response(raw: str, ctx: Context) -> Parsed:
@@ -295,14 +349,15 @@ def parse_response(raw: str, ctx: Context) -> Parsed:
         kind = it.get("type")
         p = (_reminder(it, ctx, parsed.notes) if kind == "reminder"
              else _shopping(it, parsed.notes) if kind == "shopping"
-             else _expense(it, ctx, parsed.notes) if kind == "expense" else None)
+             else _expense(it, ctx, parsed.notes) if kind == "expense"
+             else _record(it, ctx, parsed.notes) if kind == "record" else None)
         if p is not None:
             parsed.proposals.append(p)
     return parsed
 
 
 # ----------------------------- показ --------------------------------------- #
-def render(parsed: Parsed, member_names: Optional[Dict[int, str]] = None) -> str:
+def render(parsed: Parsed, member_names: Optional[Dict[int, str]] = None, titles: Optional[Dict[str, str]] = None) -> str:
     e = html.escape
     lines: List[str] = []
     for p in parsed.proposals:
@@ -316,6 +371,11 @@ def render(parsed: Parsed, member_names: Optional[Dict[int, str]] = None) -> str
             cat = f" · {e(p.category)}" if p.category else ""
             note = f" · {e(p.note)}" if p.note else ""
             lines.append(f"💸 <b>{ledger.format_money(p.amount_minor, p.currency)}</b>{cat}{note}")
+        elif p.type == "record":
+            cat = f" · {e(p.category)}" if p.category else ""
+            note = f" · {e(p.note)}" if p.note else ""
+            title = e(titles.get(p.metric, p.metric)) if titles else e(p.metric)
+            lines.append(f"📈 {title}: <b>{e(metrics.format_count(p.stored, p.unit))}</b>{cat}{note}")
     lines += [f"⚠️ {e(n)}" for n in parsed.notes]
     return "\n".join(lines)
 
@@ -325,7 +385,8 @@ async def make_context(space: Space, members: Dict[int, str], now: Optional[date
     zone = pytz.timezone(space.timezone or "UTC")
     now_local = (now.astimezone(zone) if now and now.tzinfo else datetime.now(pytz.utc).astimezone(zone))
     return Context(now_local=now_local, tz=space.timezone or "UTC", currency=space.currency, kind=space.kind,
-                   members=members, categories=ledger.category_names(space.kind, space.settings))
+                   members=members, categories=ledger.category_names(space.kind, space.settings),
+                   metrics={k: m for k, m in metrics.metrics_for(space).items() if k != metrics.EXPENSE})
 
 
 async def analyze(text: str, space: Space, members: Dict[int, str], llm: LLM, now: Optional[datetime] = None) -> Parsed:
@@ -356,6 +417,8 @@ def _load(payload: str) -> Tuple[List[Proposal], str, str]:
             out.append(ShoppingP(**d))
         elif t == "expense":
             out.append(ExpenseP(**d))
+        elif t == "record":
+            out.append(RecordP(**d))
     return out, data.get("source", "text"), data.get("raw_text", "")
 
 
@@ -418,6 +481,20 @@ async def commit(scope: SpaceScope, space: Space, proposals: List[Proposal], *, 
                 cat = await ledger.resolve_category(scope, p.category)
                 lines.append(f"✅ Записано: <b>{ledger.format_money(entry.amount_minor, entry.currency)}</b> · {e(cat.name)}"
                              + (f" · {e(p.note)}" if p.note else "") + "  (отменить: /undo)")
+            elif p.type == "record":
+                m = metrics.metrics_for(space).get(p.metric)
+                if m is None or m.key == metrics.EXPENSE:
+                    lines.append("❌ Показатель больше не описан в настройках")
+                    continue
+                if m.categories:
+                    await ledger.ensure_categories(scope, space.kind, space.settings, kind=m.key, names=list(m.categories))
+                await ledger.add_entry(
+                    scope, None, currency=m.unit, category=p.category, note=p.note, metric=m.key, stored=p.stored,
+                    occurred_at=datetime.fromisoformat(p.occurred_at) if p.occurred_at else None,
+                    source=source, raw_text=raw_text)
+                lines.append(f"✅ {e(m.title)}: <b>{e(metrics.format_count(p.stored, m.unit))}</b>"
+                             + (f" · {e(p.category)}" if p.category else "") + (f" · {e(p.note)}" if p.note else "")
+                             + "  (отменить: /undo)")
         except (reminders.ReminderError, ledger.LedgerError) as err:
             lines.append(f"❌ {e(str(err))}")
         except Exception as err:  # noqa: BLE001 — один сбой не должен терять остальные записи

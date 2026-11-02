@@ -17,6 +17,7 @@ from aiogram.types import Message
 
 from app.core.access import is_admin
 from app.core.config import settings
+from app.spaces import config as space_config
 from app.spaces import repo, service
 from app.spaces.terms import terms_for
 
@@ -217,3 +218,43 @@ async def cmd_leave(message: Message):
         await message.answer(f"❌ {html.escape(str(e))}")
         return
     await message.answer("Вы вышли из пространства.")
+
+
+@router.message(Command("space_config"), F.chat.type == "private")
+async def cmd_space_config(message: Message, command: CommandObject):
+    """Настройки пространства: /space_config | set <ключ> <JSON> | unset <ключ> (админ и выше)."""
+    if not _enabled():
+        return
+    scope = await _scope(message, "admin")
+    if scope is None:
+        return
+    space = await service.get_space(scope.space_id)
+    try:
+        action, key, raw = space_config.parse_command(command.args or "")
+        if action == "show":
+            await message.answer(
+                f"⚙️ <b>{html.escape(space.name)}</b>\n"
+                f"timezone: <code>{html.escape(space.timezone)}</code> · currency: <code>{html.escape(space.currency)}</code>\n"
+                f"<pre>{html.escape(space_config.render(space.settings))}</pre>\n"
+                f"Ключи: {', '.join(space_config.SETTING_KEYS + space_config.COLUMN_KEYS)}\n"
+                "<code>/space_config set &lt;ключ&gt; &lt;JSON&gt;</code> · <code>/space_config unset &lt;ключ&gt;</code>")
+            return
+        if action == "unset":
+            new = space_config.prepare_unset(space.settings, key)
+            await service.replace_settings(space.id, new)
+            await message.answer(f"✅ {html.escape(key)} сброшен.")
+            return
+        value = space_config.load_value(key, raw)
+        if key in space_config.COLUMN_KEYS:
+            val = space_config.validate_column(key, value)
+            await service.replace_settings(
+                space.id, space.settings, timezone_name=val if key == "timezone" else None,
+                currency=val if key == "currency" else None)
+            extra = "\nЗаписи в прежней валюте в сводки не попадут." if key == "currency" else ""
+            await message.answer(f"✅ {key}: <code>{html.escape(val)}</code>{extra}")
+            return
+        new = space_config.prepare(space.settings, key, value)
+        await service.replace_settings(space.id, new)
+        await message.answer(f"✅ {html.escape(key)} сохранён.")
+    except space_config.ConfigError as e:
+        await message.answer(f"❌ {html.escape(str(e))}")

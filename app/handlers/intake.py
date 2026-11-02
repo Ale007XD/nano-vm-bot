@@ -2,7 +2,7 @@
 
 Роутер стоит перед messages.router: для участников общего пространства (при SPACES_ENABLED)
 текст и голос идут сюда, остальные пользователи общаются с ассистентом как раньше.
-Также /list (список покупок с кнопками), /expenses (расходы за месяц), /undo.
+Также /list (список покупок с кнопками), /expenses (расходы за месяц), /report, /undo.
 """
 import html
 import logging
@@ -23,7 +23,7 @@ from aiogram.types import (
 from app.core.access import check_daily_limit, user_allowed
 from app.core.config import settings
 from app.core.usage import flush_usage, start_usage_session
-from app.spaces import checklists, intake, ledger, repo, service
+from app.spaces import checklists, intake, ledger, metrics, repo, reports, service
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,8 @@ async def process_text(message: Message, text: str, scope, space, source: str = 
         return
     if intake.needs_confirmation(parsed.proposals, space):
         token = await intake.put_pending(space.id, uid, parsed, source, text)
-        await message.answer("Записать?\n\n" + intake.render(parsed), reply_markup=_keyboard(token))
+        titles = {k: m.title for k, m in metrics.metrics_for(space).items()}
+        await message.answer("Записать?\n\n" + intake.render(parsed, titles=titles), reply_markup=_keyboard(token))
         return
     lines = await intake.commit(scope, space, parsed.proposals, source=source, raw_text=text)
     lines += [f"⚠️ {html.escape(n)}" for n in parsed.notes]
@@ -257,8 +258,10 @@ async def cmd_undo(message: Message):
     if entry is None:
         await message.answer("У вас нет записей, которые можно отменить.")
         return
-    await message.answer(f"↩️ Отменено: {ledger.format_money(entry.amount_minor, entry.currency)}"
-                         + (f" · {html.escape(entry.note)}" if entry.note else ""))
+    m = metrics.metrics_for(space).get(entry.metric)
+    shown = (metrics.formatter(m)(entry.amount_minor) if m else metrics.format_count(entry.amount_minor, entry.currency))
+    title = f"{html.escape(m.title)}: " if m and m.key != metrics.EXPENSE else ""
+    await message.answer(f"↩️ Отменено: {title}{shown}" + (f" · {html.escape(entry.note)}" if entry.note else ""))
 
 
 @router.message(Command("expenses"), F.chat.type == "private")
@@ -279,3 +282,34 @@ async def cmd_expenses(message: Message, command=None):
     summary = await ledger.monthly_summary(scope, year, month, tz=space.timezone, currency=space.currency)
     names = await intake.member_names(space.id)
     await message.answer(ledger.format_report(summary, names, "Расходы"))
+
+
+@router.message(Command("report"), F.chat.type == "private")
+async def cmd_report(message: Message, command=None):
+    """/report — список отчётов пространства; /report <id> — построить сейчас за последний полный период."""
+    if getattr(settings, "SPACES_ENABLED", False) is not True:
+        return
+    scope, space = await _member_scope(message)
+    if scope is None:
+        return
+    specs = [s for s in reports.specs_for(space) if s.audience == "all" or scope.can("admin")]
+    arg = ((getattr(command, "args", None) or "").strip().lower())
+    if not arg:
+        if not specs:
+            await message.answer("Отчётов нет.")
+            return
+        await message.answer("📊 Отчёты:\n" + "\n".join(
+            f"• <code>{s.id}</code> — {html.escape(s.title)}" for s in specs) + "\n\n/report &lt;id&gt; — построить сейчас")
+        return
+    spec = next((s for s in specs if s.id == arg), None)
+    if spec is None:
+        await message.answer("Такого отчёта нет. Список: /report")
+        return
+    now = datetime.now(pytz.utc).astimezone(pytz.timezone(space.timezone))
+    win = reports.window_for(spec, reports.slot_for(spec, now), space.timezone)
+    try:
+        text = await reports.build_text(scope, space, spec, win)
+    except reports.ReportError as e:
+        await message.answer(f"❌ {html.escape(str(e))}")
+        return
+    await message.answer(text or f"За период {html.escape(win.label)} записей нет.")
