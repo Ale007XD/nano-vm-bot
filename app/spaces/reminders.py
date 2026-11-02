@@ -12,7 +12,7 @@ import asyncio
 import html
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional, Sequence, Tuple
 
 import pytz
 from apscheduler.triggers.cron import CronTrigger
@@ -205,12 +205,26 @@ async def run_once(send: Send, now: Optional[datetime] = None, limit: int = 50, 
     return done
 
 
-async def run_loop(send: Send, interval: float = 15.0, stop: Optional[asyncio.Event] = None) -> None:
-    """Бесконечный цикл исполнителя (останавливается stop.set() или отменой задачи)."""
+async def run_loop(send: Send, interval: float = 15.0, stop: Optional[asyncio.Event] = None,
+                   hooks: Sequence[Tuple[Callable[[], Awaitable[Any]], float]] = ()) -> None:
+    """Бесконечный цикл исполнителя (останавливается stop.set() или отменой задачи).
+
+    hooks — дополнительные периодические задачи [(корутина без аргументов, не чаще чем раз в N секунд)];
+    сбой хука логируется и не останавливает цикл.
+    """
     stop = stop or asyncio.Event()
-    logger.info(f"space reminders loop started (every {interval}s)")
+    last: dict = {i: None for i in range(len(hooks))}  # None — ещё не вызывался: первый вызов сразу
+    loop = asyncio.get_running_loop()
+    logger.info(f"space reminders loop started (every {interval}s, {len(hooks)} hooks)")
     while not stop.is_set():
         await run_once(send)
+        for i, (hook, every) in enumerate(hooks):
+            if last[i] is None or loop.time() - last[i] >= every:
+                last[i] = loop.time()
+                try:
+                    await hook()
+                except Exception as e:  # noqa: BLE001
+                    logger.error(f"loop hook failed: {e}")
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:

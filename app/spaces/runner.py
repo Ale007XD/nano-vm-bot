@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from app.core.config import settings
-from app.spaces import reminders
+from app.spaces import reminders, reports
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,12 @@ def start(bot) -> Optional[asyncio.Task]:
     async def send(chat_id: int, text: str) -> None:
         await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
 
+    hooks = []
+    if reports.enabled():
+        reports.load_plugins(getattr(settings, "SPACE_REPORT_PLUGINS", ""))
+        hooks.append((lambda: reports.run_due(send), 60.0))
     _stop = asyncio.Event()
-    _task = asyncio.create_task(reminders.run_loop(send, poll_seconds(), _stop), name="space-reminders")
+    _task = asyncio.create_task(reminders.run_loop(send, poll_seconds(), _stop, hooks=hooks), name="space-reminders")
     return _task
 
 

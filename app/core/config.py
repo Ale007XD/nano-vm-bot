@@ -261,6 +261,10 @@ class Settings(BaseSettings):
     )
     SPACE_MAX_MEMBERS: int = Field(default=20, ge=1, le=1000, description="Максимум участников в одном пространстве")
     SPACE_REMINDER_POLL_SECONDS: int = Field(default=15, ge=1, le=300, description="Как часто (сек) проверять созревшие напоминания пространств; доставка может опоздать на этот интервал")
+    SPACE_REPORTS_ENABLED: bool = Field(default=True, description="Отчёты пространств по расписанию (еженедельные/ежемесячные); false — не отправлять никакие")
+    SPACE_REPORT_DEFAULTS: str = Field(default="monthly", description="Отчёты по умолчанию для пространств без своих settings[\"reports\"]: monthly, weekly (через запятую) или пусто")
+    SPACE_REPORT_HOUR: int = Field(default=9, ge=0, le=23, description="Час отправки отчётов по умолчанию (по часовому поясу пространства)")
+    SPACE_REPORT_PLUGINS: str = Field(default="", description="Модули с собственными типами отчётов (через запятую), каждый вызывает register_report_type")
     SPACE_INTAKE_ENABLED: bool = Field(
         default=True,
         description="Участникам пространств свободный текст и голос разбираются в напоминания/покупки/расходы (при SPACES_ENABLED)"
@@ -545,7 +549,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.22.0", description="Application version")
+    APP_VERSION: str = Field(default="1.23.0", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

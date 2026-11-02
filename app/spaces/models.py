@@ -123,8 +123,9 @@ class LedgerEntry(SpaceOwned, ExtBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     author_id = Column(BigInteger, nullable=False)
-    amount_minor = Column(BigInteger, nullable=False)
-    currency = Column(String(8), nullable=False, default="RUB")
+    metric = Column(String(32), nullable=False, default="expense", index=True)  # что считаем (см. spaces/metrics.py)
+    amount_minor = Column(BigInteger, nullable=False)  # значение ×100 (для денег — копейки)
+    currency = Column(String(8), nullable=False, default="RUB")  # валюта или единица измерения («шт»)
     category_id = Column(Integer, nullable=True)
     note = Column(String(200), nullable=False, default="")
     occurred_at = Column(DateTime, nullable=False, default=_now)  # UTC, без tzinfo
@@ -164,3 +165,16 @@ class IntakePending(ExtBase):
     user_id = Column(BigInteger, nullable=False)
     payload = Column(Text, nullable=False)  # JSON: предложения, источник, исходный текст
     created_at = Column(DateTime, default=_now, index=True)
+
+
+class ReportRun(ExtBase):
+    """Журнал отправленных отчётов: один отчёт на «слот» расписания, независимо от перезапусков."""
+
+    __tablename__ = "report_runs"
+
+    space_id = Column(Integer, primary_key=True)
+    report_id = Column(String(32), primary_key=True)
+    slot = Column(String(40), primary_key=True)  # например «month:2026-11-01»
+    status = Column(String(12), nullable=False, default="sending")  # sending | sent | failed | skipped
+    attempts = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=_now)

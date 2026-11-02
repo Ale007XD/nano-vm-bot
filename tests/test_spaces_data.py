@@ -538,7 +538,7 @@ class TestRunner:
 
         captured = {}
 
-        async def fake_loop(send, interval, stop):
+        async def fake_loop(send, interval, stop, hooks=()):
             captured["send"] = send
 
         monkeypatch.setattr(rm, "run_loop", fake_loop)
