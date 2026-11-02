@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.24.0 · **Тесты:** 1208 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.24.1 · **Тесты:** 1224 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 
@@ -102,6 +102,22 @@ docker compose logs -f
 | `/ban <id>`, `/unban <id>` | Бан-лист (admin) |
 | `/users` | Активность пользователей за сегодня (admin) |
 | `/clear` | Очистить историю |
+
+---
+
+## Проверка работоспособности
+
+```bash
+# с сервера: все заявленные возможности → server_check_report.md (код возврата 1 при сбое)
+docker compose exec bot python scripts/server_check.py
+docker compose exec bot python scripts/server_check.py --offline      # без сети
+docker compose exec bot python scripts/server_check.py --only spaces  # одна группа
+
+# качество разбора сообщений пространств на живой модели → intake_eval_report.md
+docker compose exec bot python scripts/intake_live_eval.py --repeat 3
+```
+
+Рабочая БД читается только на чтение; функциональная проверка пространств идёт во временной базе.
 
 ---
 
