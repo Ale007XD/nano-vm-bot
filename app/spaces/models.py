@@ -152,3 +152,15 @@ class Reminder(SpaceOwned, ExtBase):
     run_count = Column(Integer, nullable=False, default=0)
     last_run_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_now)
+
+
+class IntakePending(ExtBase):
+    """Разобранное сообщение, ожидающее подтверждения кнопкой (живёт INTAKE_TTL_MINUTES)."""
+
+    __tablename__ = "intake_pending"
+
+    token = Column(String(16), primary_key=True)
+    space_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    payload = Column(Text, nullable=False)  # JSON: предложения, источник, исходный текст
+    created_at = Column(DateTime, default=_now, index=True)

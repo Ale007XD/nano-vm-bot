@@ -9,6 +9,7 @@ from app.handlers import (
     channel,
     commands,
     fallback,
+    intake,
     memory,
     messages,
     providers,
@@ -30,5 +31,6 @@ def register_handlers(dp: Dispatcher):
     dp.include_router(memory.router)
     dp.include_router(reminders.router)
     dp.include_router(channel.router)     # Channel posts → knowledge base
+    dp.include_router(intake.router)      # участники пространств: текст/голос → дела, покупки, расходы; /list /undo /expenses
     dp.include_router(messages.router)    # Must be last to catch all text
     dp.include_router(fallback.router)    # Catch-all callbacks — строго последним
