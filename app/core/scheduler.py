@@ -80,7 +80,12 @@ class TaskScheduler:
             if self.scheduler.get_job(job_id):
                 self.scheduler.remove_job(job_id)
             
-            if task.task_type == "one_time":
+            kind = task.task_type
+            if kind == "reminder":
+                # Простое напоминание: разовое (run_date) или повторяющееся (cron) — расписание как у задач
+                kind = "recurring" if task.cron_expression and not task.run_date else "one_time"
+
+            if kind == "one_time":
                 # One-time task at specific date
                 if task.run_date:
                     run_dt = task.run_date
@@ -101,7 +106,7 @@ class TaskScheduler:
                         logger.warning(f"Task {task.id} has past date, marking completed")
                         await self._mark_task_completed(task.id)
                     
-            elif task.task_type == "recurring":
+            elif kind == "recurring":
                 # Recurring task with cron expression
                 if task.cron_expression:
                     trigger = CronTrigger.from_crontab(
@@ -117,7 +122,7 @@ class TaskScheduler:
                     )
                     logger.info(f"Scheduled recurring task {task.id} with cron: {task.cron_expression}")
                     
-            elif task.task_type == "interval":
+            elif kind == "interval":
                 # Interval-based task
                 if task.extra_data and "interval_minutes" in task.extra_data:
                     minutes = task.extra_data["interval_minutes"]
@@ -167,7 +172,8 @@ class TaskScheduler:
                 task.next_run_at = self._get_next_run_time(task_id)
                 
                 # Check if max runs reached
-                if task.max_runs and task.run_count >= task.max_runs:
+                one_shot_reminder = task.task_type == "reminder" and not task.cron_expression
+                if one_shot_reminder or (task.max_runs and task.run_count >= task.max_runs):
                     task.is_active = False
                     task.is_completed = True
                     logger.info(f"Task {task_id} reached max runs, deactivating")

@@ -90,7 +90,7 @@ async def on_startup(bot: Bot):
     task_scheduler.set_bot(bot)
     task_scheduler.start()
 
-    # Напоминания пространств (семья/фирма/класс): свой исполнитель, не APScheduler
+    # Напоминания (личные и пространств): свой исполнитель, не APScheduler
     from app.spaces import runner as space_runner
 
     space_runner.start(bot)

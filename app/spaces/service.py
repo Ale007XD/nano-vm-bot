@@ -89,17 +89,22 @@ async def get_space(space_id: int, session_maker=None) -> Optional[Space]:
         return space if space is not None and space.is_active else None
 
 
-async def spaces_of(user_id: int, session_maker=None) -> List[Space]:
-    """Активные пространства пользователя (старые первыми)."""
+PERSONAL_KIND = "personal"  # личное пространство одного человека (напоминания без общего пространства)
+
+
+async def spaces_of(user_id: int, session_maker=None, include_personal: bool = False) -> List[Space]:
+    """Активные пространства пользователя (старые первыми); личное — только по запросу."""
     sm = resolve_session_maker(session_maker)
     async with sm() as s:
-        rows = await s.execute(
+        q = (
             select(Space)
             .join(SpaceMember, SpaceMember.space_id == Space.id)
             .where(SpaceMember.user_id == user_id, Space.is_active.is_(True))
             .order_by(SpaceMember.joined_at, Space.id)
         )
-        return list(rows.scalars())
+        if not include_personal:
+            q = q.where(Space.kind != PERSONAL_KIND)
+        return list((await s.execute(q)).scalars())
 
 
 async def update_settings(space_id: int, patch: Dict[str, Any], session_maker=None) -> bool:
@@ -144,13 +149,15 @@ async def member_role(space_id: int, user_id: int, session_maker=None) -> Option
 
 
 async def is_member_anywhere(user_id: int, session_maker=None) -> bool:
+    """Участник общего пространства. Личное не считается: его создаёт любой уже допущенный
+    пользователь, и доступ в закрытого бота оно давать не должно."""
     sm = resolve_session_maker(session_maker)
     async with sm() as s:
         row = (
             await s.execute(
                 select(SpaceMember.space_id)
                 .join(Space, Space.id == SpaceMember.space_id)
-                .where(SpaceMember.user_id == user_id, Space.is_active.is_(True))
+                .where(SpaceMember.user_id == user_id, Space.is_active.is_(True), Space.kind != PERSONAL_KIND)
                 .limit(1)
             )
         ).first()
@@ -180,7 +187,7 @@ async def add_member(
     sm = resolve_session_maker(session_maker)
     async with sm() as s:
         space = await s.get(Space, space_id)
-        if space is None or not space.is_active:
+        if space is None or not space.is_active or space.kind == PERSONAL_KIND:
             return RESULT_INVALID
         if await s.get(SpaceMember, (space_id, user_id)) is not None:
             return RESULT_ALREADY
@@ -257,7 +264,7 @@ async def create_invite(
     sm = resolve_session_maker(session_maker)
     async with sm() as s:
         space = await s.get(Space, space_id)
-        if space is None or not space.is_active:
+        if space is None or not space.is_active or space.kind == PERSONAL_KIND:
             raise SpaceError("пространство не найдено")
         s.add(SpaceInvite(code=code, space_id=space_id, role=role,
                           max_uses=max(0, min(int(max_uses), MAX_USES_LIMIT)),

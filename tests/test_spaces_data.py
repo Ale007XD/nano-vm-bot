@@ -513,9 +513,7 @@ class TestRunner:
 
         st = sys.modules["app.core.config"].settings
         monkeypatch.setattr(rm, "run_once", AsyncMock(return_value=0))
-        monkeypatch.setattr(st, "SPACES_ENABLED", False, raising=False)
-        assert runner.start(MagicMock()) is None
-        monkeypatch.setattr(st, "SPACES_ENABLED", True, raising=False)
+        monkeypatch.setattr(st, "SPACES_ENABLED", False, raising=False)  # личные напоминания работают и без флага
         monkeypatch.setattr(st, "SPACE_REMINDER_POLL_SECONDS", 1, raising=False)
         bot = MagicMock()
         t1 = runner.start(bot)
@@ -538,8 +536,6 @@ class TestRunner:
     async def test_send_uses_html(self, monkeypatch):
         from app.spaces import runner
 
-        st = sys.modules["app.core.config"].settings
-        monkeypatch.setattr(st, "SPACES_ENABLED", True, raising=False)
         captured = {}
 
         async def fake_loop(send, interval, stop):

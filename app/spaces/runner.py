@@ -20,10 +20,9 @@ def poll_seconds() -> float:
 
 
 def start(bot) -> Optional[asyncio.Task]:
-    """Запустить цикл, если SPACES_ENABLED=true; повторный вызов не создаёт второй цикл."""
+    """Запустить цикл (всегда: он же доставляет личные напоминания /remind, /daily, /weekly);
+    повторный вызов второй цикл не создаёт."""
     global _task, _stop
-    if getattr(settings, "SPACES_ENABLED", False) is not True:
-        return None
     if _task is not None and not _task.done():
         return _task
 

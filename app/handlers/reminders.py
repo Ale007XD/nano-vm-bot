@@ -1,8 +1,10 @@
 """
 Reminder and scheduled task handlers
 """
+import html
 import logging
 
+import pytz
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -11,6 +13,8 @@ from aiogram.types import Message
 from app.core.access import user_allowed
 from app.core.config import settings
 from app.core.scheduler import task_scheduler
+from app.spaces import personal
+from app.spaces.reminders import ReminderError
 from app.utils.helpers import parse_time_input
 from app.utils.states import ReminderStates
 
@@ -74,48 +78,34 @@ async def process_reminder_time(message: Message, state: FSMContext):
             )
             return
 
+        uid, tz = message.from_user.id, settings.BOT_TIMEZONE
+        # Напоминание уходит текстом как есть (без LLM) через исполнитель пространств
         if reminder_type == "daily":
-            task = await task_scheduler.create_daily_task(
-                user_id=message.from_user.id,
-                telegram_id=message.from_user.id,
-                description=description,
-                hour=run_date.hour,
-                minute=run_date.minute,
-                message_text=description
-            )
+            task = await personal.add_reminder(
+                uid, description, tz=tz, cron=personal.daily_cron(run_date.hour, run_date.minute))
             time_str = f"ежедневно в {run_date.strftime('%H:%M')}"
         elif reminder_type == "weekly":
-            task = await task_scheduler.create_weekly_task(
-                user_id=message.from_user.id,
-                telegram_id=message.from_user.id,
-                description=description,
-                day_of_week=run_date.weekday(),
-                hour=run_date.hour,
-                minute=run_date.minute,
-                message_text=description
-            )
+            task = await personal.add_reminder(
+                uid, description, tz=tz,
+                cron=personal.weekly_cron(run_date.weekday(), run_date.hour, run_date.minute))
             days_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
             time_str = f"еженедельно {days_ru[run_date.weekday()]} в {run_date.strftime('%H:%M')}"
         else:
-            task = await task_scheduler.create_reminder(
-                user_id=message.from_user.id,
-                telegram_id=message.from_user.id,
-                description=description,
-                run_date=run_date,
-                message_text=description
-            )
+            task = await personal.add_reminder(uid, description, tz=tz, run_at=run_date)
             time_str = run_date.strftime("%d.%m.%Y %H:%M")
 
         await message.answer(
             f"✅ <b>Напоминание создано!</b>\n\n"
             f"📝 {description}\n"
             f"🕐 {time_str}\n"
-            f"📋 ID: <code>{task.id}</code>\n\n"
-            f"Отменить: <code>/cancel_task {task.id}</code>"
+            f"📋 ID: <code>r{task.id}</code>\n\n"
+            f"Отменить: <code>/cancel_task r{task.id}</code>"
         )
 
         await state.clear()
 
+    except ReminderError as e:
+        await message.answer(f"❌ {html.escape(str(e))}\n\nПопробуйте еще раз или отмените: /cancel")
     except Exception as e:
         logger.error(f"Error creating reminder: {e}")
         await message.answer(
@@ -132,9 +122,11 @@ async def cmd_tasks(message: Message):
         return
     
     try:
-        tasks = await task_scheduler.get_user_tasks(message.from_user.id)
-        
-        if not tasks:
+        uid = message.from_user.id
+        mine = await personal.list_reminders(uid, settings.BOT_TIMEZONE)
+        tasks = await task_scheduler.get_user_tasks(uid)  # прежние задачи, созданные до 1.21.0
+
+        if not mine and not tasks:
             await message.answer(
                 "📋 <b>У вас нет активных задач</b>\n\n"
                 "Создать:\n"
@@ -143,9 +135,19 @@ async def cmd_tasks(message: Message):
                 "• /weekly - еженедельная задача"
             )
             return
-        
+
         response = "📋 <b>Ваши задачи:</b>\n\n"
-        
+
+        for r in mine:
+            when = pytz.utc.localize(r.next_run_at).astimezone(pytz.timezone(r.tz)).strftime("%d.%m %H:%M")
+            kind = "🔄" if r.cron else "⏰"
+            text = r.text[:50] + ("..." if len(r.text) > 50 else "")
+            response += (
+                f"{kind} {html.escape(text)}\n"
+                f"   🕐 {when}\n"
+                f"   Отменить: <code>/cancel_task r{r.id}</code>\n\n"
+            )
+
         for task in tasks:
             # Format time
             if task.next_run_at:
@@ -154,23 +156,23 @@ async def cmd_tasks(message: Message):
                 time_str = task.run_date.strftime("%d.%m %H:%M")
             else:
                 time_str = "По расписанию"
-            
+
             # Type emoji
             type_emoji = {
                 "one_time": "⏰",
                 "recurring": "🔄",
                 "interval": "⏱️"
             }.get(task.task_type, "📌")
-            
+
             response += (
                 f"{type_emoji} <b>{task.name}</b>\n"
                 f"   {task.description[:50]}{'...' if len(task.description) > 50 else ''}\n"
                 f"   🕐 {time_str}\n"
                 f"   Отменить: <code>/cancel_task {task.id}</code>\n\n"
             )
-        
+
         await message.answer(response)
-        
+
     except Exception as e:
         logger.error(f"Error getting tasks: {e}")
         await message.answer("❌ Ошибка получения списка задач")
@@ -194,14 +196,20 @@ async def cmd_cancel_task(message: Message):
         return
     
     try:
-        task_id = int(args[1])
-        success = await task_scheduler.cancel_task(task_id, message.from_user.id)
-        
+        raw = args[1].strip().lower()
+        if raw.startswith("r"):  # напоминание по новой схеме: r<число>
+            task_id = int(raw[1:])
+            success = await personal.cancel(message.from_user.id, task_id)
+        else:
+            task_id = int(raw)
+            success = await task_scheduler.cancel_task(task_id, message.from_user.id)
+            raw = str(task_id)
+
         if success:
-            await message.answer(f"✅ Задача <code>{task_id}</code> отменена")
+            await message.answer(f"✅ Задача <code>{html.escape(raw)}</code> отменена")
         else:
             await message.answer(
-                f"❌ Задача <code>{task_id}</code> не найдена\n\n"
+                f"❌ Задача <code>{html.escape(raw)}</code> не найдена\n\n"
                 "Проверьте ID: /tasks"
             )
             
