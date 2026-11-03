@@ -476,6 +476,7 @@ class MultiProviderLLMClient:
                 provider.error_count = 0
             healthy_providers = self.providers
 
+        json_failed = False  # провайдер не смог выдать JSON по самому запросу (не сбой провайдера)
         for provider in healthy_providers:
             for attempt in range(max_attempts):
                 try:
@@ -538,6 +539,13 @@ class MultiProviderLLMClient:
                     if byok_mode and _is_auth_error(e):
                         break
 
+                    # Groq JSON-режим: 400 json_validate_failed — модель отказалась или не уложилась в JSON.
+                    # Повтор того же запроса даст то же (и жжёт лимит токенов), провайдер здесь не виноват:
+                    # не повторяем, не считаем за ошибку провайдера, идём дальше
+                    if "json_validate_failed" in str(e):
+                        json_failed = True
+                        break
+
                     wait = _rate_limit_wait(e)
                     if wait is not None and wait > MAX_RATE_LIMIT_WAIT:
                         # лимит не снимется за разумное время — не ждём, к следующему провайдеру
@@ -568,6 +576,8 @@ class MultiProviderLLMClient:
             )
 
         error_msg = f"All providers failed. Last error: {last_error}"
+        if json_failed and "json_validate_failed" not in error_msg:
+            error_msg += " [json_validate_failed]"  # последняя ошибка могла быть лимитом соседа и скрыть причину
         logger.error(error_msg)
 
         task_id = self._store_pending_task(messages, model, temperature, max_tokens)

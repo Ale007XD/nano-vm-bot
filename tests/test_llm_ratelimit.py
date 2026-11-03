@@ -93,6 +93,34 @@ async def test_error_without_hint_keeps_default_backoff(llm, monkeypatch):
     assert llm._sleeps == [2.0]
 
 
+JSON_400 = ('groq API error 400: {"error":{"message":"Failed to generate JSON.","code":"json_validate_failed",'
+            '"failed_generation":"I can\'t comply"}}')
+
+
+@pytest.mark.asyncio
+async def test_json_validate_failed_is_not_retried_nor_counted(llm, monkeypatch):
+    """Отказ модели в JSON-режиме — свойство запроса: без повторов на том же провайдере, провайдер не «деградирует»."""
+    calls = _script(llm, monkeypatch, [Exception(JSON_400), "ok"])
+    res = await llm.chat([v2.Message(role="user", content="hi")], response_format={"type": "json_object"})
+    assert res.provider == "openrouter" and calls == ["groq", "openrouter"]
+    assert llm._sleeps == [] and llm.providers[0].error_count == 0
+
+
+@pytest.mark.asyncio
+async def test_json_failure_is_not_masked_by_next_providers_rate_limit(llm, monkeypatch):
+    _script(llm, monkeypatch, [Exception(JSON_400)] + [Exception(_err("7m12s"))])
+    with pytest.raises(Exception) as e:
+        await llm.chat([v2.Message(role="user", content="hi")], response_format={"type": "json_object"})
+    assert "json_validate_failed" in str(e.value) and "All providers failed" in str(e.value)
+
+
+@pytest.mark.asyncio
+async def test_other_400_still_retried(llm, monkeypatch):
+    calls = _script(llm, monkeypatch, [Exception("groq API error 400: bad request"), "ok"])
+    res = await llm.chat([v2.Message(role="user", content="hi")])
+    assert res.provider == "groq" and calls == ["groq", "groq"]
+
+
 @pytest.fixture
 def kb():
     spec = importlib.util.spec_from_file_location("_t_kb_llm", os.path.join("skills", "custom", "knowledge_base.py"))
