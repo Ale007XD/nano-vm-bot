@@ -116,13 +116,23 @@ def _metrics_prompt(ctx: Context) -> str:
     return "\nПоказатели для type=record:\n" + "\n".join(lines)
 
 
+def _category_hint(ctx: Context) -> str:
+    """Название категории показателя + число с его единицей — уже запись этого показателя, даже без слова-названия."""
+    cats = [(m, c) for m in ctx.metrics.values() for c in m.categories[:1]]
+    if not cats:
+        return ""
+    m, c = cats[0]
+    return (f"  Если названа категория показателя и число (например «{c.lower()} … 3»), это запись показателя «{m.key}», "
+            "даже когда его название не произнесено: категория определяет показатель.\n")
+
+
 def _record_line(ctx: Context) -> str:
     if not ctx.metrics:
         return ""
     return ('- значение показателя: {"type":"record","metric":"ключ из списка показателей","value":число,'
             '"category":"категория показателя или null","note":"коротко","date":"YYYY-MM-DD или null"}\n'
             "  Используй только ключи из списка показателей. Потраченные деньги — всегда type=expense, даже если назван товар "
-            "из показателей («потратил 500 на погремушки» -> expense).\n")
+            "из показателей («потратил 500 на погремушки» -> expense).\n" + _category_hint(ctx))
 
 
 def _calendar(now: datetime) -> str:

@@ -645,3 +645,16 @@ class TestOnceTimeLenient:
         c2 = intake.Context(NOW, TZ, "RUB", "family", {}, ["Прочее"],
                             metrics={"toys": __import__("app.spaces.metrics", fromlist=["x"]).Metric("toys", "Т", "шт", "count")})
         assert "потратил 500 на погремушки" in intake.build_system_prompt(c2)
+
+
+class TestCategoryHint:
+    def test_hint_only_when_metric_has_categories(self):
+        M = __import__("app.spaces.metrics", fromlist=["x"]).Metric
+        base = dict(now_local=NOW, tz=TZ, currency="RUB", kind="family", members={}, categories=["Прочее"])
+        with_cats = intake.Context(**base, metrics={"toys": M("toys", "Погремушки", "шт", "count", ("Опт", "Розница"))})
+        assert "категория определяет показатель" in intake.build_system_prompt(with_cats)
+        assert "«toys»" in intake.build_system_prompt(with_cats)
+        no_cats = intake.Context(**base, metrics={"h": M("h", "Часы", "ч", "count")})
+        assert "категория определяет показатель" not in intake.build_system_prompt(no_cats)
+        none = intake.Context(**base)
+        assert "категория определяет показатель" not in intake.build_system_prompt(none)
