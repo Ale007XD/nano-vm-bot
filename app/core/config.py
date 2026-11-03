@@ -269,6 +269,7 @@ class Settings(BaseSettings):
         default=True,
         description="Участникам пространств свободный текст и голос разбираются в напоминания/покупки/расходы (при SPACES_ENABLED)"
     )
+    SPACE_INTAKE_REASONING: str = Field(default="low", description="Глубина рассуждений модели при разборе сообщений (low|medium|high; только gpt-oss на Groq). low — быстрее и экономнее по токенам, для извлечения полей этого достаточно; пусто — по умолчанию провайдера")
     SPACE_INTAKE_MODEL: str = Field(default="", description="Модель для разбора сообщений пространств (пусто — как у провайдера по умолчанию)")
     SPACE_INVITE_TTL_DAYS: int = Field(default=7, ge=1, le=365, description="Срок действия приглашения в пространство, дней")
     RAG_MEMORIES: int = Field(
@@ -549,7 +550,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = Field(default="Alex-Nano-Bot", description="Application name")
-    APP_VERSION: str = Field(default="1.24.2", description="Application version")
+    APP_VERSION: str = Field(default="1.24.3", description="Application version")
     
     # Voice Processing
     TEMP_DIR: str = Field(default="data/temp", description="Temporary files directory")

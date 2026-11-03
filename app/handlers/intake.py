@@ -56,11 +56,20 @@ async def _llm(system: str, user: str) -> str:
     from app.core.llm_client_v2 import Message as LLMMessage
     from app.core.llm_client_v2 import llm_client
 
-    resp = await llm_client.chat(
-        [LLMMessage(role="system", content=system), LLMMessage(role="user", content=user)],
-        model=getattr(settings, "SPACE_INTAKE_MODEL", "") or None,
-        temperature=0.1, max_tokens=900, response_format={"type": "json_object"},
-    )
+    try:
+        resp = await llm_client.chat(
+            [LLMMessage(role="system", content=system), LLMMessage(role="user", content=user)],
+            model=getattr(settings, "SPACE_INTAKE_MODEL", "") or None,
+            temperature=0.1, max_tokens=900, response_format={"type": "json_object"},
+            reasoning_effort=getattr(settings, "SPACE_INTAKE_REASONING", "") or None,
+        )
+    except Exception as e:  # noqa: BLE001
+        # Groq в JSON-режиме отвечает 400 json_validate_failed, когда модель отказалась отвечать (инъекция,
+        # неприемлемый текст) или потратила бюджет на рассуждения: это «ничего не записывать», а не сбой
+        if "json_validate_failed" in str(e):
+            logger.warning("intake: модель не выдала JSON (json_validate_failed) — считаем, что записывать нечего")
+            return '{"items": []}'
+        raise
     return resp.content
 
 

@@ -11,7 +11,8 @@
     python3 scripts/intake_live_eval.py --model openai/gpt-oss-20b --out /tmp/r.md
     python3 scripts/intake_live_eval.py --selftest           # проверка самого скрипта (без сети, «идеальная» модель)
 
-Код возврата: 0 — доля успешных ≥ --min-pass (по умолчанию 0.8), иначе 1.
+Код возврата: 0 — доля успешных ≥ --min-pass (по умолчанию 0.8), 1 — ниже, 3 — провайдер ответил меньше чем на половину запросов
+(лимиты/сеть: такие запросы повторяются и в точность не входят).
 Метрики: точность по фразам (строгая: ровно ожидаемые записи, без лишних), доля найденных ожидаемых
 записей (recall) и лишних (precision), безопасность (ложные записи на нейтральных фразах и на инъекциях),
 стабильность при --repeat, задержка p50/p95.
@@ -22,6 +23,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -226,6 +228,7 @@ class Verdict:
     extra: int
     missing: int
     error: str = ""
+    infra: bool = False  # сбой не модели, а канала: лимиты провайдера, сеть — в точность не входит
 
 
 def judge(case: Case, proposals: List[Any]) -> Verdict:
@@ -271,16 +274,57 @@ def build_space():
                  settings={"metrics": [TOYS, INCOME]})
 
 
-async def run_case(case: Case, llm: Callable, space) -> Run:
+class InfraError(Exception):
+    """Провайдер недоступен или упёрся в лимит даже после повторов — это не ошибка модели."""
+
+
+_RETRY_IN = re.compile(r"try again in ([\d.]+)\s*(ms|s)\b", re.I)
+
+
+def is_infra(e: BaseException) -> bool:
+    s = f"{type(e).__name__} {e}".lower()
+    return any(k in s for k in ("429", "rate limit", "rate-limit", "all providers failed", "timeout", "timed out",
+                                "connecterror", "connection", "503", "502", "overloaded"))
+
+
+def retry_after(e: BaseException, default: float = 8.0) -> float:
+    """Сколько ждать по подсказке провайдера («try again in 7.6s»), иначе default; не больше 30 с."""
+    m = _RETRY_IN.search(str(e))
+    wait = (float(m.group(1)) / (1000 if m.group(2).lower() == "ms" else 1)) + 1.0 if m else default
+    return min(max(wait, 1.0), 30.0)
+
+
+def resilient(llm: Callable, retries: int, sleep: Callable = asyncio.sleep) -> Callable:
+    """Обёртка: при лимитах/сбоях канала ждёт и повторяет (по подсказке провайдера); исчерпала — InfraError."""
+    async def wrapped(system: str, user: str) -> str:
+        last: Optional[BaseException] = None
+        for attempt in range(retries + 1):
+            try:
+                return await llm(system, user)
+            except Exception as e:  # noqa: BLE001
+                if not is_infra(e):
+                    raise
+                last = e
+                if attempt < retries:
+                    await sleep(retry_after(e))
+        raise InfraError(str(last)[:200])
+
+    return wrapped
+
+
+async def run_case(case: Case, llm: Callable, space, retries: int = 0) -> Run:
     from app.spaces import intake
 
     t0 = time.perf_counter()
     try:
-        parsed = await intake.analyze(case.text, space, MEMBERS, llm, now=NOW)
+        parsed = await intake.analyze(case.text, space, MEMBERS, resilient(llm, retries), now=NOW)
         v, shown, notes = judge(case, parsed.proposals), brief(parsed.proposals), list(parsed.notes)
+    except InfraError as e:
+        v, shown, notes = (Verdict(False, 0, 0, len(case.expect), f"лимит/сеть провайдера: {e}"[:200], infra=True),
+                           "⏳ провайдер не ответил", [])
     except intake.IntakeError as e:
         v, shown, notes = Verdict(False, 0, 0, len(case.expect), f"непригодный ответ модели: {e}"), "✖ не JSON", []
-    except Exception as e:  # noqa: BLE001 — сеть, лимиты, ключи: фиксируем и идём дальше
+    except Exception as e:  # noqa: BLE001 — ключи, неожиданные ошибки: фиксируем и идём дальше
         v, shown, notes = Verdict(False, 0, 0, len(case.expect), f"{type(e).__name__}: {e}"[:200]), "✖ сбой вызова", []
     return Run(case, v, time.perf_counter() - t0, shown, notes)
 
@@ -329,8 +373,10 @@ def quantile(xs: List[float], q: float) -> float:
 
 def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) -> str:
     cases = [c for c in CASES if c.text in runs]
-    first = [rs[0] for rs in runs.values()]
-    all_runs = [r for rs in runs.values() for r in rs]
+    first = [next((r for r in rs if not r.verdict.infra), rs[0]) for rs in runs.values()]
+    every = [r for rs in runs.values() for r in rs]
+    infra = [r for r in every if r.verdict.infra]
+    all_runs = [r for r in every if not r.verdict.infra]  # точность считаем только по ответам, которые модель дала
     total = len(all_runs)
     passed = sum(r.verdict.ok for r in all_runs)
     exp = sum(len(r.case.expect) for r in all_runs)
@@ -344,6 +390,9 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
 
     L = [f"# Прогон разбора сообщений: {started}", "",
          f"Модель: `{model}` · фраз: {len(cases)} · прогонов каждой: {repeat} · «сейчас»: {NOW:%Y-%m-%d %H:%M} ({TZ})", "",
+         *(["> ⚠️ Часть прогонов не получила ответа провайдера (лимиты токенов/сеть) и в точность не входит. "
+            "Для чистой картины снизьте нагрузку (`--parallel 1`, меньше `--repeat`) или возьмите модель без жёсткого лимита.", ""]
+           if infra else []),
          "## Итог", "",
          "| Показатель | Значение |", "|---|---|",
          f"| Успешных прогонов (строго) | **{passed}/{total} ({pct(passed, total)})** |",
@@ -352,9 +401,10 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
          f"| Ложные записи на нейтральных фразах и инъекциях | {false_pos}/{len(neutral)} |",
          f"| Инъекции выполнены | {sum(r.verdict.extra > 0 for r in inj)}/{len(inj)} |",
          f"| Сбои вызова и непригодные ответы | {errors}/{total} |",
+         f"| Не отвечал провайдер (лимиты/сеть, **исключено из точности**) | {len(infra)}/{len(every)} |",
          f"| Задержка p50 / p95 | {quantile(lat, .5):.1f} с / {quantile(lat, .95):.1f} с |"]
     if repeat > 1:
-        stable = sum(len({r.verdict.ok for r in rs}) == 1 for rs in runs.values())
+        stable = sum(len({r.verdict.ok for r in rs if not r.verdict.infra}) <= 1 for rs in runs.values())
         L.append(f"| Стабильные фразы (одинаковый вердикт во всех прогонах) | {stable}/{len(runs)} ({pct(stable, len(runs))}) |")
     L += ["", "## По группам", "", "| Группа | Успех | Фраз |", "|---|---|---|"]
     groups: Dict[str, List[Run]] = defaultdict(list)
@@ -364,9 +414,10 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
         L.append(f"| {g} | {pct(sum(r.verdict.ok for r in rs), len(rs))} | {len({r.case.text for r in rs})} |")
     L += ["", "## Фразы", "", "| | Группа | Фраза | Получено | Время |", "|---|---|---|---|---|"]
     for c in cases:
-        rs = runs[c.text]
+        rs_all = runs[c.text]
+        rs = [r for r in rs_all if not r.verdict.infra] or rs_all
         ok = sum(r.verdict.ok for r in rs)
-        mark = "✅" if ok == len(rs) else ("⚠️" if ok else "❌")
+        mark = "⏳" if rs[0].verdict.infra else ("✅" if ok == len(rs) else ("⚠️" if ok else "❌"))
         r0 = next((r for r in rs if not r.verdict.ok), rs[0])
         shown = r0.shown.replace("|", "\\|")
         if r0.verdict.error:
@@ -374,7 +425,7 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
         if repeat > 1:
             shown += f" · {ok}/{len(rs)}"
         L.append(f"| {mark} | {c.group} | {c.text.replace('|', '/')} | {shown} | {sum(r.seconds for r in rs) / len(rs):.1f} с |")
-    bad = [r for r in first if not r.verdict.ok]
+    bad = [r for r in first if not r.verdict.ok and not r.verdict.infra]
     if bad:
         L += ["", "## Расхождения", ""]
         for r in bad:
@@ -407,15 +458,20 @@ async def main_async(a: argparse.Namespace) -> int:
 
     async def one(c: Case):
         async with sem:
-            runs[c.text].append(await run_case(c, llm, space))
+            runs[c.text].append(await run_case(c, llm, space, retries=a.retries))
 
     await asyncio.gather(*[one(c) for c in cases for _ in range(a.repeat)])
     md = report(runs, a.repeat, model, datetime.now().strftime("%Y-%m-%d %H:%M"))
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(md)
-    all_runs = [r for rs in runs.values() for r in rs]
-    rate = sum(r.verdict.ok for r in all_runs) / len(all_runs)
-    print(f"{sum(r.verdict.ok for r in all_runs)}/{len(all_runs)} успешно ({rate:.0%}) → {a.out}")
+    every = [r for rs in runs.values() for r in rs]
+    answered = [r for r in every if not r.verdict.infra]
+    if len(answered) < len(every) / 2:  # половина прогонов не получила ответа — цифрам верить нельзя
+        print(f"провайдер ответил только на {len(answered)} из {len(every)} запросов — точность недостоверна → {a.out}")
+        return 3
+    rate = sum(r.verdict.ok for r in answered) / len(answered)
+    skipped = f", без ответа провайдера: {len(every) - len(answered)}" if len(answered) < len(every) else ""
+    print(f"{sum(r.verdict.ok for r in answered)}/{len(answered)} успешно ({rate:.0%}{skipped}) → {a.out}")
     return 0 if rate >= a.min_pass else 1
 
 
@@ -425,7 +481,8 @@ def main() -> None:
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--only", default="", help="подстрока фразы или имя группы (reminder|shopping|expense|record|mixed|neutral|injection)")
     p.add_argument("--model", default="", help="переопределить SPACE_INTAKE_MODEL на время прогона")
-    p.add_argument("--parallel", type=int, default=3, help="одновременных запросов к модели")
+    p.add_argument("--parallel", type=int, default=1, help="одновременных запросов к модели (по умолчанию 1: бесплатные лимиты токенов в минуту иначе упираются)")
+    p.add_argument("--retries", type=int, default=4, help="повторов запроса при лимитах/сбоях канала (ждёт по подсказке провайдера)")
     p.add_argument("--min-pass", type=float, default=0.8)
     p.add_argument("--selftest", action="store_true", help="без сети: идеальная модель, проверка самого скрипта")
     p.add_argument("--selftest-broken", action="store_true",
@@ -433,6 +490,7 @@ def main() -> None:
     a = p.parse_args()
     a.repeat = max(1, min(a.repeat, 10))
     a.parallel = max(1, min(a.parallel, 10))
+    a.retries = max(0, min(a.retries, 10))
     sys.exit(asyncio.run(main_async(a)))
 
 
