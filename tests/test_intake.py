@@ -605,3 +605,43 @@ class TestRegistration:
         src = inspect.getsource(register_handlers)
         assert src.index("intake.router") < src.index("messages.router")
         assert src.index("reminders.router") < src.index("intake.router")  # состояния FSM — раньше
+
+
+class TestOnceTimeLenient:
+    """Модель плохо считает календарь: понимаем день недели + time, голое время и дату + time."""
+
+    def one(self, ctx, **kw):
+        parsed = intake.parse_response(J(rem(**{"at": None, **kw})), ctx)
+        return parsed.proposals[0].run_at if parsed.proposals else parsed.notes
+
+    def test_weekday_with_time(self, ctx):
+        assert self.one(ctx, weekday="fri", time="09:00") == "2026-11-06T02:00:00"  # пн 07:20 → ближайшая пятница
+        assert self.one(ctx, weekday="сб", time="11:00") == "2026-11-07T04:00:00"
+
+    def test_same_weekday_today_or_next_week(self, ctx):
+        assert self.one(ctx, weekday="mon", time="15:00") == "2026-11-02T08:00:00"  # сегодня, время впереди
+        assert self.one(ctx, weekday="mon", time="06:00") == "2026-11-08T23:00:00"  # прошло → пн 09.11 06:00 по Бангкоку
+
+    def test_bare_time_is_today_or_tomorrow(self, ctx):
+        assert self.one(ctx, at="18:00") == "2026-11-02T11:00:00"
+        assert self.one(ctx, at="06:00") == "2026-11-02T23:00:00"  # 06:00 уже прошло → завтра 06:00 по Бангкоку
+
+    def test_date_plus_time_and_date_alone(self, ctx):
+        assert self.one(ctx, at="2026-11-04", time="10:30") == "2026-11-04T03:30:00"
+        notes = self.one(ctx, at="2026-11-04")  # дата без времени — не гадаем, а просим уточнить
+        assert isinstance(notes, list) and "когда напомнить" in notes[0]
+
+    def test_garbage_at_falls_back_to_weekday(self, ctx):
+        assert self.one(ctx, at="в пятницу", weekday="fri", time="09:00") == "2026-11-06T02:00:00"
+
+    def test_still_dropped_without_enough_info(self, ctx):
+        for kw in (dict(weekday="fri"), dict(time="09:00"), dict(at="завтра"), dict(weekday="xyz", time="09:00")):
+            assert isinstance(self.one(ctx, **kw), list), kw
+
+    def test_prompt_has_calendar_and_expense_rule(self, ctx):
+        p = intake.build_system_prompt(ctx)
+        assert "пн 2026-11-02 (сегодня)" in p and "вт 2026-11-03 (завтра)" in p and "пт 2026-11-06" in p
+        assert p.count("2026-11-") >= 8
+        c2 = intake.Context(NOW, TZ, "RUB", "family", {}, ["Прочее"],
+                            metrics={"toys": __import__("app.spaces.metrics", fromlist=["x"]).Metric("toys", "Т", "шт", "count")})
+        assert "потратил 500 на погремушки" in intake.build_system_prompt(c2)

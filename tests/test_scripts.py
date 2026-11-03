@@ -358,3 +358,28 @@ class TestIntakeLlmWrapper:
         self._patch(monkeypatch, boom)
         with pytest.raises(Exception, match="429"):
             asyncio.run(h._llm("s", "u"))
+
+
+class TestRefusalsAndRaw:
+    def test_refusal_on_neutral_is_safe_but_counted(self, ev):
+        async def refuse(system, user):
+            return "I'm sorry, but I can't comply with that."
+
+        space = ev.build_space()
+        inj = next(c for c in ev.CASES if c.group == "injection" and not c.expect)
+        r = asyncio.run(ev.run_case(inj, refuse, space))
+        assert r.verdict.ok and r.verdict.refused and "отказала" in r.shown
+        need = next(c for c in ev.CASES if c.expect)
+        r2 = asyncio.run(ev.run_case(need, refuse, space))
+        assert not r2.verdict.ok and not r2.verdict.refused  # когда запись нужна, отказ — это провал
+
+    def test_raw_answer_in_discrepancies(self, ev):
+        async def wrong(system, user):
+            return '{"items": [{"type": "expense", "amount": 1, "category": "Дом", "note": "`x`"}]}'
+
+        space = ev.build_space()
+        case = next(c for c in ev.CASES if c.text == "потратил 1200 на продукты")
+        r = asyncio.run(ev.run_case(case, wrong, space))
+        md = ev.report({case.text: [r]}, 1, "m", "t")
+        assert not r.verdict.ok and "ответ модели" in md and '"amount": 1' in md and "`x`" not in md
+        assert "Отказы модели вместо JSON" in md

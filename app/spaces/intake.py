@@ -121,7 +121,18 @@ def _record_line(ctx: Context) -> str:
         return ""
     return ('- значение показателя: {"type":"record","metric":"ключ из списка показателей","value":число,'
             '"category":"категория показателя или null","note":"коротко","date":"YYYY-MM-DD или null"}\n'
-            "  Используй только ключи из списка показателей; расходы денег — всегда type=expense.\n")
+            "  Используй только ключи из списка показателей. Потраченные деньги — всегда type=expense, даже если назван товар "
+            "из показателей («потратил 500 на погремушки» -> expense).\n")
+
+
+def _calendar(now: datetime) -> str:
+    """Таблица ближайших 8 дней — модель ошибается в «в пятницу», но не в чтении таблицы."""
+    out = []
+    for i in range(8):
+        d = now + timedelta(days=i)
+        mark = " (сегодня)" if i == 0 else " (завтра)" if i == 1 else ""
+        out.append(f"{WEEKDAYS_SHORT[d.weekday()]} {d:%Y-%m-%d}{mark}")
+    return ", ".join(out)
 
 
 def build_system_prompt(ctx: Context) -> str:
@@ -131,6 +142,7 @@ def build_system_prompt(ctx: Context) -> str:
 Ты ничего не отвечаешь человеку — только возвращаешь один JSON-объект.
 
 Сейчас: {now:%Y-%m-%d %H:%M}, {WEEKDAYS_SHORT[now.weekday()]}, часовой пояс {ctx.tz}.
+Ближайшие дни: {_calendar(now)}.
 Участники: {names}.
 Категории расходов: {", ".join(ctx.categories)}.
 Валюта по умолчанию: {ctx.currency}.{_metrics_prompt(ctx)}
@@ -213,22 +225,59 @@ def _to_utc_naive(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
 
 
+def _next_at(ctx: Context, h: int, mi: int, weekday: Optional[int] = None) -> datetime:
+    """Ближайшее будущее «h:mi» — сегодня или завтра (weekday None) либо в указанный день недели."""
+    zone = pytz.timezone(ctx.tz)
+    day = ctx.now_local.date()
+    if weekday is not None:
+        day += timedelta(days=(weekday - day.weekday()) % 7)
+    cand = zone.localize(datetime(day.year, day.month, day.day, h, mi))
+    if cand <= ctx.now_local:
+        cand = zone.localize(datetime(day.year, day.month, day.day, h, mi) + timedelta(days=7 if weekday is not None else 1))
+    return cand
+
+
+def _once_time(it: dict, ctx: Context) -> Optional[datetime]:
+    """Время разового напоминания. Модель плохо считает календарь, поэтому кроме полной даты-времени
+    понимаем то, что она отдаёт чаще: только время («18:00»), дату + time, день недели + time."""
+    zone = pytz.timezone(ctx.tz)
+    raw = str(it.get("at") or "").strip()
+    tm = _hhmm(it.get("time"))
+    if raw:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):  # дата без времени — только вместе с time
+            if tm:
+                try:
+                    d = datetime.strptime(raw, "%Y-%m-%d")
+                    return zone.localize(d.replace(hour=tm[0], minute=tm[1]))
+                except ValueError:
+                    return None
+            return None
+        try:
+            at = datetime.fromisoformat(raw)
+            return at.astimezone(zone) if at.tzinfo else zone.localize(at)
+        except ValueError:
+            pass
+        only = _hhmm(raw)
+        if only:
+            return _next_at(ctx, *only)
+    wd = WEEKDAYS.get(str(it.get("weekday") or "").lower())
+    if wd is not None and tm:
+        return _next_at(ctx, tm[0], tm[1], wd)
+    return None
+
+
 def _reminder(it: dict, ctx: Context, notes: List[str]) -> Optional[ReminderP]:
     text = _s(it.get("text"), reminders.MAX_TEXT)
     if not text:
         return None
-    zone = pytz.timezone(ctx.tz)
     repeat = str(it.get("repeat") or "none").lower()
     tm = _hhmm(it.get("time"))
     p = ReminderP(text=text)
     if repeat == "none":
-        raw_at = str(it.get("at") or "").strip()
-        try:
-            at = datetime.fromisoformat(raw_at)
-        except ValueError:
+        at = _once_time(it, ctx)
+        if at is None:
             notes.append(f"«{text}»: не понял, когда напомнить — укажите время")
             return None
-        at = at.astimezone(zone) if at.tzinfo else zone.localize(at)
         if at < ctx.now_local - timedelta(seconds=60):
             notes.append(f"«{text}»: это время уже прошло")
             return None

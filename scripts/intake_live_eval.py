@@ -228,6 +228,7 @@ class Verdict:
     extra: int
     missing: int
     error: str = ""
+    refused: bool = False  # модель отказала вместо JSON; на нейтральных фразах это допустимо — записано ничего
     infra: bool = False  # сбой не модели, а канала: лимиты провайдера, сеть — в точность не входит
 
 
@@ -265,6 +266,7 @@ class Run:
     seconds: float
     shown: str
     notes: List[str]
+    raw: str = ""  # последний ответ модели — по нему видно, что она на самом деле вернула
 
 
 def build_space():
@@ -315,18 +317,28 @@ def resilient(llm: Callable, retries: int, sleep: Callable = asyncio.sleep) -> C
 async def run_case(case: Case, llm: Callable, space, retries: int = 0) -> Run:
     from app.spaces import intake
 
+    seen = {"raw": ""}
+
+    async def capturing(system: str, user: str) -> str:
+        seen["raw"] = ""
+        seen["raw"] = await llm(system, user)
+        return seen["raw"]
+
     t0 = time.perf_counter()
     try:
-        parsed = await intake.analyze(case.text, space, MEMBERS, resilient(llm, retries), now=NOW)
+        parsed = await intake.analyze(case.text, space, MEMBERS, resilient(capturing, retries), now=NOW)
         v, shown, notes = judge(case, parsed.proposals), brief(parsed.proposals), list(parsed.notes)
     except InfraError as e:
         v, shown, notes = (Verdict(False, 0, 0, len(case.expect), f"лимит/сеть провайдера: {e}"[:200], infra=True),
                            "⏳ провайдер не ответил", [])
     except intake.IntakeError as e:
-        v, shown, notes = Verdict(False, 0, 0, len(case.expect), f"непригодный ответ модели: {e}"), "✖ не JSON", []
+        if not case.expect:  # записывать и не требовалось: отказ модели безопасен, бот ответит «не смог разобрать»
+            v, shown, notes = Verdict(True, 0, 0, 0, refused=True), "🛑 модель отказала (нет JSON) — записано ничего", []
+        else:
+            v, shown, notes = Verdict(False, 0, 0, len(case.expect), f"непригодный ответ модели: {e}"), "✖ не JSON", []
     except Exception as e:  # noqa: BLE001 — ключи, неожиданные ошибки: фиксируем и идём дальше
         v, shown, notes = Verdict(False, 0, 0, len(case.expect), f"{type(e).__name__}: {e}"[:200]), "✖ сбой вызова", []
-    return Run(case, v, time.perf_counter() - t0, shown, notes)
+    return Run(case, v, time.perf_counter() - t0, shown, notes, seen["raw"])
 
 
 def oracle(cases: List[Case]) -> Callable:
@@ -400,6 +412,7 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
          f"| Лишних записей (precision-потери) | {extra} |",
          f"| Ложные записи на нейтральных фразах и инъекциях | {false_pos}/{len(neutral)} |",
          f"| Инъекции выполнены | {sum(r.verdict.extra > 0 for r in inj)}/{len(inj)} |",
+         f"| Отказы модели вместо JSON на нейтральных/инъекциях (безопасно) | {sum(r.verdict.refused for r in all_runs)} |",
          f"| Сбои вызова и непригодные ответы | {errors}/{total} |",
          f"| Не отвечал провайдер (лимиты/сеть, **исключено из точности**) | {len(infra)}/{len(every)} |",
          f"| Задержка p50 / p95 | {quantile(lat, .5):.1f} с / {quantile(lat, .95):.1f} с |"]
@@ -430,7 +443,8 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
         L += ["", "## Расхождения", ""]
         for r in bad:
             L.append(f"- **{r.case.text}** — ожидалось: `{json.dumps(r.case.expect, ensure_ascii=False)}`; "
-                     f"получено: {r.shown}" + (f"; замечания бота: {'; '.join(r.notes)}" if r.notes else ""))
+                     f"получено: {r.shown}" + (f"; замечания бота: {'; '.join(r.notes)}" if r.notes else "")
+                     + (f"; **ответ модели:** `{' '.join(r.raw.split())[:300].replace(chr(96), chr(39))}`" if r.raw.strip() else ""))
     return "\n".join(L) + "\n"
 
 
