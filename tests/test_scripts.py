@@ -191,3 +191,36 @@ class TestMore:
         a = argparse.Namespace(only="", offline=True, skip_llm=True, strict=strict, out=str(tmp_path / "r.md"))
         assert asyncio.run(sc.main_async(a)) == code
         assert (tmp_path / "r.md").read_text(encoding="utf-8").startswith("# Проверка сервера")
+
+
+@pytest.mark.parametrize("name", ["server_check", "intake_live_eval"])
+class TestEnsureEnv:
+    def test_missing_deps_explained_not_33_failures(self, name, tmp_path, monkeypatch, capsys):
+        mod = load(name)
+        monkeypatch.setattr(mod, "ROOT", str(tmp_path))
+        monkeypatch.setattr("importlib.util.find_spec", lambda m: None)
+        with pytest.raises(SystemExit) as e:
+            mod.ensure_env(f"{name}.py")
+        err = capsys.readouterr().err
+        assert e.value.code == 2 and "docker compose exec bot python" in err and "pydantic" in err
+
+    def test_reexecs_into_project_venv(self, name, tmp_path, monkeypatch):
+        mod = load(name)
+        py = tmp_path / ".venv" / "bin" / "python"
+        py.parent.mkdir(parents=True)
+        py.write_text("")
+        monkeypatch.setattr(mod, "ROOT", str(tmp_path))
+        monkeypatch.setattr("importlib.util.find_spec", lambda m: None)
+        called = {}
+
+        def fake_execv(p, a):  # настоящий execv не возвращается
+            called.update(p=p, a=a)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(mod.os, "execv", fake_execv)
+        with pytest.raises(KeyboardInterrupt):
+            mod.ensure_env(f"{name}.py")
+        assert called["p"] == str(py) and called["a"][1].endswith(f"scripts/{name}.py")
+
+    def test_nothing_to_do_when_deps_present(self, name):
+        load(name).ensure_env(f"{name}.py")  # в тестовом окружении всё установлено

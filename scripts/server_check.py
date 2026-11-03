@@ -36,6 +36,33 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+REQUIRED_MODULES = ("pytz", "pydantic", "pydantic_settings", "sqlalchemy", "aiogram", "apscheduler", "aiosqlite", "httpx")
+
+
+def ensure_env(script: str) -> None:
+    """Скрипт нужен в окружении бота. Нет зависимостей — берём venv проекта (.venv/venv) или объясняем, как запустить."""
+    import importlib.util
+
+    missing = [m for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None]
+    if not missing:
+        return
+    for rel in (".venv/bin/python", "venv/bin/python"):
+        py = os.path.join(ROOT, rel)
+        if os.path.exists(py) and os.path.realpath(py) != os.path.realpath(sys.executable):
+            os.execv(py, [py, os.path.join(ROOT, "scripts", script), *sys.argv[1:]])
+    print(f"Не хватает модулей Python: {', '.join(missing)}.\n"
+          "Скрипт запускается в окружении бота, а не системным python3:\n"
+          f"  docker compose exec bot python scripts/{script}   # если бот в Docker\n"
+          f"  .venv/bin/python scripts/{script}                 # если у проекта есть venv\n"
+          "  pip install -r requirements.txt                    # или поставьте зависимости в текущее окружение",
+          file=sys.stderr)
+    sys.exit(2)
+
+
+if __name__ == "__main__" and not {"-h", "--help"} & set(sys.argv):
+    ensure_env("server_check.py")
+
+
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 ICON = {PASS: "✅", FAIL: "❌", WARN: "⚠️", SKIP: "⏭"}
 

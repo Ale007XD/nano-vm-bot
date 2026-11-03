@@ -2,6 +2,11 @@
 
 All notable changes to Alex-Nano-Bot will be documented in this file.
 
+## [1.24.2] - 2026-11-03
+
+### Fixed
+- `scripts/server_check.py` и `scripts/intake_live_eval.py` при запуске системным `python3` (без зависимостей бота) выдавали 33 «сбоя» с `No module named 'pydantic'`. Теперь скрипт сам проверяет окружение: берёт `.venv`/`venv` проекта, а если зависимостей нет — печатает одну понятную подсказку (`docker compose exec bot python scripts/…`) и завершается с кодом 2
+
 ## [1.24.1] - 2026-11-03
 
 ### Added
