@@ -61,6 +61,23 @@ VISION_VERIFY_TRIGGERS = [
 ]
 
 
+async def _quick_reminder(message: Message, text: str) -> bool:
+    """Явная просьба «напомни/оповести…» — настоящее напоминание, а не ответ агента (у агентов нет планировщика).
+
+    True — сообщение обработано; ответ в историю диалога не пишем, чтобы обещание не размножалось.
+    """
+    from app.handlers.intake import _llm
+    from app.spaces import quick
+
+    if not quick.looks_like_reminder(text):
+        return False
+    reply = await quick.handle(text, message.from_user.id, _llm, in_group=message.chat.type != "private")
+    if reply is None:
+        return False
+    await message.answer(reply)
+    return True
+
+
 @router.message(F.text)
 async def handle_message(message: Message, state: FSMContext):
     """Handle incoming text messages"""
@@ -94,6 +111,9 @@ async def handle_message(message: Message, state: FSMContext):
     # (ранние return — ссылка в базу знаний, ошибка YouTube — иначе индикатор висит до 3 минут)
     typing_task = None
     try:
+        if await _quick_reminder(message, user_message):
+            return
+
         async with async_session_maker() as session:
             db_user = await get_or_create_user(
                 session,
@@ -691,6 +711,9 @@ async def handle_voice(message: Message, state: FSMContext):
         logger.info(f"Transcribed voice for user {user.id}: {transcribed_text[:100]}...")
 
         await message.bot.send_chat_action(message.chat.id, "typing")
+
+        if await _quick_reminder(message, transcribed_text):
+            return
 
         async with async_session_maker() as session:
             db_user = await get_or_create_user(

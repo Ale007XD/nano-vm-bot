@@ -36,7 +36,7 @@ def ctx():
 
 
 def rem(**kw):
-    base = {"type": "reminder", "text": "купить хлеб", "at": "2026-11-03T18:00", "repeat": "none",
+    base = {"type": "reminder", "text": "купить хлеб", "at": "2028-06-01T18:00", "repeat": "none",
             "weekday": None, "day": None, "time": None, "for": None}
     return {**base, **kw}
 
@@ -56,7 +56,7 @@ class TestExtract:
 class TestReminders:
     def test_one_time_converted_to_utc(self, ctx):
         [p] = intake.parse_response(J(rem()), ctx).proposals
-        assert p.run_at == "2026-11-03T11:00:00" and p.when == "03.11 (вт) 18:00" and p.cron is None
+        assert p.run_at == "2028-06-01T11:00:00" and p.when == "01.06 (чт) 18:00" and p.cron is None
 
     def test_past_far_and_garbage_dates_dropped_with_notes(self, ctx):
         for at in ("2026-11-02T07:00", "2099-01-01T10:00", "завтра", None):

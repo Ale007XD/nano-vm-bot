@@ -304,5 +304,8 @@ def current_datetime_prompt(tz_name: Optional[str] = None) -> str:
     now = datetime.now(_resolve_zone(tz_name))
     return (
         f"Текущие дата и время: {_WEEKDAYS_RU[now.weekday()]}, "
-        f"{now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')} ({tz_name})."
+        f"{now.strftime('%d.%m.%Y')}, {now.strftime('%H:%M')} ({tz_name}). "
+        "У тебя нет инструмента напоминаний и оповещений: не обещай «напомню», «оповещу» и не называй время "
+        "срабатывания. Если просят напомнить — скажи, что для этого нужна фраза вроде "
+        "«напомни завтра в 18:00 позвонить маме» или команда /remind."
     )
