@@ -516,3 +516,136 @@ class TestShowcaseOps:
         env.write_text('SHOWCASES=[{"slug":"a","token":"1:x","operator_chat_id":-1},{"slug":"b","token":"2:y",'
                        '"operator_chat_id":-2}]\n')
         assert ops.main(["--db", path, "--env", str(env)], now=self.now()) == 0
+
+
+class TestShowcaseEval:
+    @pytest.fixture(scope="module")
+    def se(self):
+        os.environ.setdefault("BOT_TOKEN", "selftest")
+        os.environ.setdefault("OPENROUTER_API_KEY", "selftest")
+        return load("showcase_live_eval")
+
+    def run(self, se, llm, cases=None, only_retrieval=False, top_k=3):
+        from app.core.showcase_prompt import DEFAULT_SHOWCASE_PROMPT
+
+        async def go():
+            return [await se.run_case(c, se.fake_search(), None if only_retrieval else llm, DEFAULT_SHOWCASE_PROMPT, top_k)
+                    for c in (cases or se.SELFTEST_CASES)]
+        return asyncio.run(go())
+
+    def test_oracle_passes_everything_and_report_has_metrics(self, se):
+        runs = self.run(se, se.oracle())
+        assert all(r.verdict.ok for r in runs)
+        md = se.report({r.case.q: [r] for r in runs}, 1, {"top_k": "3"}, False)
+        for s in ("hit@K", "hit@1", "Честный отказ", "Утечки промпта", "100%"):
+            assert s in md
+
+    def test_broken_model_is_caught_on_every_axis(self, se):
+        runs = self.run(se, se.broken())
+        by = {r.case.q: r.verdict for r in runs}
+        assert not any(v.ok for v in by.values())
+        assert any("не отказала" in p for r in runs for p in r.verdict.problems)  # выдумывает вместо отказа
+        assert any("запрещённое" in p for r in runs for p in r.verdict.problems)  # утёк системный промпт
+        md = se.report({r.case.q: [r] for r in runs}, 1, {"top_k": "3"}, False)
+        assert "Утечки промпта/запрещённого в инъекциях | 2/2" in md and "## Расхождения" in md
+
+    def test_retrieval_only_never_calls_model_and_measures_rank(self, se):
+        from unittest.mock import AsyncMock
+
+        llm = AsyncMock()
+        runs = self.run(se, llm, only_retrieval=True)
+        llm.assert_not_awaited()
+        faq = [r for r in runs if r.case.sources]
+        assert [r.verdict.rank for r in faq] == [1, 1, 1]
+        assert all(r.verdict.ok for r in runs)
+
+    def test_wrong_document_is_a_retrieval_miss(self, se):
+        c = se.Case("Сколько хранится договор?", sources=["kontakty.md"])
+        [r] = self.run(se, None, [c], only_retrieval=True, top_k=1)
+        assert r.verdict.retrieval_ok is False and r.verdict.rank is None and not r.verdict.ok
+
+    def test_judge_rules(self, se):
+        ans = se.Answer([], ["a.md"], text="Хранится ПЯТЬ лет")
+        j = lambda **kw: se.judge(se.Case("q", **kw), ans, 3).ok  # noqa: E731
+        assert j(has=["пять лет"]) and j(has_any=["x", "пять"]) and not j(has=["десять"]) and not j(forbid=["лет"])
+        assert not j(refuse=True)  # ответил, хотя отказ обязателен
+        refusal = se.Answer([], [], text="В базе знаний нет информации.")
+        assert se.judge(se.Case("q", has=["x"]), refusal, 3).ok is False  # отказал, хотя ответ есть
+        assert se.judge(se.Case("q", refuse=True), refusal, 3).ok
+
+    def test_infra_is_excluded(self, se):
+        async def limited(system, user):
+            raise Exception("429 rate limit")
+
+        c = se.Case("Сколько хранится договор?", sources=["dogovor.md"], has=["5 лет"])
+
+        async def go():
+            return await se.run_case(c, se.fake_search(), limited, "p", 3, retries=0)
+        r = asyncio.run(go())
+        assert r.verdict.infra and not r.verdict.ok
+        md = se.report({c.q: [r]}, 1, {"top_k": "3"}, False)
+        assert "не получила ответа провайдера" in md and "⏳" in md
+
+    def test_empty_search_is_fixed_not_found_without_model(self, se):
+        from unittest.mock import AsyncMock
+
+        async def none(q, k):
+            return []
+
+        llm = AsyncMock()
+        ans = asyncio.run(se.ask("что-то", none, llm, "p", 3))
+        llm.assert_not_awaited()
+        assert se.REFUSAL.search(ans.text)
+
+    def test_context_matches_bot_format(self, se):
+        docs = [{"content": "текст", "metadata": {"source_name": "a.md", "chunk_index": 2}}]
+        assert se.context_from(docs, 5) == "[Документ a.md, чанк 2]\nтекст"
+
+    def test_load_cases_validation(self, se, tmp_path):
+        import json as js
+
+        good = tmp_path / "c.json"
+        good.write_text(js.dumps([{"q": " вопрос ", "sources": ["a.md"], "has_any": ["x"]}]), encoding="utf-8")
+        [c] = se.load_cases(str(good))
+        assert c.q == "вопрос" and c.group == "faq" and c.sources == ["a.md"]
+        for bad in ('{"q": "x"}', '[{"x": 1}]', '[{"q": "  "}]'):
+            f = tmp_path / "b.json"
+            f.write_text(bad, encoding="utf-8")
+            with pytest.raises(ValueError):
+                se.load_cases(str(f))
+
+    def test_generate_cases_drafts_from_corpus_and_skips_garbage(self, se, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.core import memory
+
+        col = SimpleNamespace(get=lambda **k: {"documents": ["а" * 200, "б" * 200, "коротко"],
+                                               "metadatas": [{"source_name": "a.md"}, {"source_name": "b.md"}, {}]})
+
+        async def ensure(name):
+            return col
+
+        monkeypatch.setattr(memory.vector_memory, "ensure_corpus", ensure, raising=False)
+        replies = iter(['{"question": "Что?", "answer_keywords": ["5 лет", ""]}', "не json"])
+
+        async def llm(system, user):
+            return next(replies)
+
+        out = asyncio.run(se.generate_cases("corpus_x", 5, llm))
+        assert len(out) == 1 and out[0]["q"] == "Что?" and out[0]["has_any"] == ["5 лет"]
+        assert out[0]["sources"][0] in ("a.md", "b.md")  # источник берётся из метаданных фрагмента
+
+    def test_main_selftest_exit_codes(self, se, tmp_path):
+        import argparse
+
+        def args(**kw):
+            base = dict(showcase="", cases="", out=str(tmp_path / "r.md"), top_k=3, repeat=2, only="", model="",
+                        retrieval_only=False, parallel=1, retries=0, min_pass=0.8, generate=0, cases_out="",
+                        selftest=True, selftest_broken=False)
+            base.update(kw)
+            return argparse.Namespace(**base)
+
+        assert asyncio.run(se.main_async(args())) == 0
+        assert "Стабильные вопросы" in (tmp_path / "r.md").read_text(encoding="utf-8")
+        assert asyncio.run(se.main_async(args(selftest=False, selftest_broken=True))) == 1
+        assert asyncio.run(se.main_async(args(only="нет такого"))) == 2

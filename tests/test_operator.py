@@ -338,3 +338,96 @@ class TestWiring:
 
         src = Path("app/bot_showcase.py").read_text(encoding="utf-8")
         assert src.index("include_router(operator_router)") < src.index("include_router(showcase_router)")
+
+
+# ------------------------- админ: /sessions, /reset_sessions -------------- #
+ADMIN = 999
+
+
+class TestAdminSessions:
+    @pytest.mark.asyncio
+    async def test_non_admin_ignored(self, sm):
+        await store.open_session(CLIENT, 10, "Иван")
+        m = make_msg(make_bot(), uid=CLIENT, text="/reset_sessions all")
+        await h.cmd_reset_sessions(m)
+        await h.cmd_sessions(m)
+        m.answer.assert_not_awaited()
+        assert await store.get_open_by_client(CLIENT) is not None
+
+    @pytest.mark.asyncio
+    async def test_reset_all_closes_topic_notifies_client_and_clears_history(self, sm):
+        bot = make_bot()
+        await store.open_session(CLIENT, 10, "Иван")
+        await store.open_session(CLIENT2, 11, "Пётр")
+        history.add(CLIENT, "client", "вопрос", "question")
+        m = make_msg(bot, uid=ADMIN, text="/reset_sessions all")
+        await h.cmd_reset_sessions(m)
+        assert await store.get_open_by_client(CLIENT) is None and await store.get_open_by_client(CLIENT2) is None
+        assert bot.close_forum_topic.await_count == 2
+        assert {c.args[0] for c in bot.send_message.await_args_list} == {CLIENT, CLIENT2}
+        assert "закрыто: 2" in m.answer.await_args.args[0]
+        assert history.recent(CLIENT) == []
+
+    @pytest.mark.asyncio
+    async def test_reset_one_client_only(self, sm):
+        await store.open_session(CLIENT, 10)
+        await store.open_session(CLIENT2, 11)
+        await h.cmd_reset_sessions(make_msg(make_bot(), uid=ADMIN, text=f"/reset_sessions {CLIENT}"))
+        assert await store.get_open_by_client(CLIENT) is None
+        assert await store.get_open_by_client(CLIENT2) is not None
+
+    @pytest.mark.asyncio
+    async def test_reset_old_keeps_active(self, sm):
+        from datetime import timedelta
+
+        from sqlalchemy import update
+
+        await store.open_session(CLIENT, 10)
+        await store.open_session(CLIENT2, 11)
+        async with sm() as s:
+            await s.execute(update(store.OperatorSession).where(store.OperatorSession.client_id == CLIENT)
+                            .values(updated_at=store._now() - timedelta(hours=30)))
+            await s.commit()
+        m = make_msg(make_bot(), uid=ADMIN, text="/reset_sessions old")
+        await h.cmd_reset_sessions(m)
+        assert await store.get_open_by_client(CLIENT) is None
+        assert await store.get_open_by_client(CLIENT2) is not None
+        assert "закрыто: 1" in m.answer.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_other_showcase_untouched(self, sm):
+        await store.open_session(CLIENT, 10, tenant="other")
+        await h.cmd_reset_sessions(make_msg(make_bot(), uid=ADMIN, text="/reset_sessions all"))
+        assert await store.get_open_by_client(CLIENT, tenant="other") is not None
+
+    @pytest.mark.asyncio
+    async def test_usage_hint_and_listing(self, sm):
+        await store.open_session(CLIENT, 10, "Иван")
+        m = make_msg(make_bot(), uid=ADMIN, text="/reset_sessions")
+        await h.cmd_reset_sessions(m)
+        assert "Использование" in m.answer.await_args.args[0]
+        m2 = make_msg(make_bot(), uid=ADMIN, text="/sessions")
+        await h.cmd_sessions(m2)
+        out = m2.answer.await_args.args[0]
+        assert str(CLIENT) in out and "Иван" in out
+
+    @pytest.mark.asyncio
+    async def test_admin_inside_own_session_is_not_relayed(self, sm):
+        """Именно так админ застрял у оператора: команды не должны уходить в сессию."""
+        await store.open_session(ADMIN, 10, "admin")
+        assert await h.client_in_session(make_msg(make_bot(), uid=ADMIN, text="/reset_sessions all")) is False
+        assert await h.client_in_session(make_msg(make_bot(), uid=ADMIN, text="/sessions")) is False
+        assert await h.client_in_session(make_msg(make_bot(), uid=ADMIN, text="вопрос")) is True
+
+    @pytest.mark.asyncio
+    async def test_activity_updates_touch(self, sm):
+        from datetime import timedelta
+
+        from sqlalchemy import update
+
+        await store.open_session(CLIENT, 10)
+        async with sm() as s:
+            await s.execute(update(store.OperatorSession).values(updated_at=store._now() - timedelta(hours=30)))
+            await s.commit()
+        await store.touch(CLIENT)
+        assert not h._is_stale(await store.get_open_by_client(CLIENT))

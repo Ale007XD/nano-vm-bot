@@ -25,7 +25,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core import handoff, support_events
 from app.core import operator as store
-from app.core.access import showcase_allowed
+from app.core.access import is_admin, showcase_allowed
 from app.core.dialog import history
 from app.core.showcases import current as current_showcase
 
@@ -46,7 +46,9 @@ _CLIENT_OWN_COMMANDS = {
     "start", "help", "operator", "endchat",
     "invite", "invites", "revoke_invite", "allow", "deny", "members",
     "corpus_stats", "corpus_upload", "corpus_delete", "showcase_usage",
+    "sessions", "reset_sessions",  # админ управляет сессиями, даже если сам сидит в одной из них
 }
+STALE_HOURS = 24
 
 
 def operator_chat_id() -> int:
@@ -288,6 +290,7 @@ async def operator_reply(message: Message):
     row = await store.get_open_by_thread(message.message_thread_id, tenant=_tenant())
     if not row:
         return
+    await store.touch(row.client_id, tenant=_tenant())
     try:
         await message.bot.copy_message(
             chat_id=row.client_id,
@@ -319,5 +322,68 @@ async def client_message(message: Message):
     row = await store.get_open_by_client(uid, tenant=_tenant())
     if not row:
         return
+    await store.touch(uid, tenant=_tenant())
     if not await _forward_to_topic(message.bot, row, message):
         await message.answer("⚠️ Не удалось передать сообщение оператору. Попробуйте ещё раз.")
+
+
+# ----------------------------- администратор ----------------------------- #
+def _age(dt) -> str:
+    if not dt:
+        return "?"
+    from datetime import datetime, timezone
+
+    hours = (datetime.now(timezone.utc).replace(tzinfo=None) - dt).total_seconds() / 3600
+    return f"{hours:.0f} ч" if hours >= 1 else "<1 ч"
+
+
+def _is_stale(row, hours: int = STALE_HOURS) -> bool:
+    from datetime import datetime, timedelta, timezone
+
+    last = row.updated_at or row.opened_at
+    return bool(last) and last < datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+
+
+@router.message(Command("sessions"), F.chat.type == "private")
+async def cmd_sessions(message: Message):
+    """Админ: открытые сессии оператора этой витрины."""
+    if not is_admin(message.from_user.id):
+        return
+    rows = await store.list_open_sessions(tenant=_tenant())
+    if not rows:
+        await message.answer("Открытых сессий оператора нет.")
+        return
+    lines = [
+        f"• <code>{r.client_id}</code> {html.escape(r.client_name or '—')} · активность {_age(r.updated_at)} назад"
+        + (" ⚠️ зависла" if _is_stale(r) else "")
+        for r in rows
+    ]
+    await message.answer(
+        f"<b>Открытые сессии ({len(rows)}):</b>\n" + "\n".join(lines)
+        + f"\n\nСбросить: /reset_sessions all | old (без активности {STALE_HOURS} ч) | ID клиента"
+    )
+
+
+@router.message(Command("reset_sessions"), F.chat.type == "private")
+async def cmd_reset_sessions(message: Message):
+    """Админ: /reset_sessions all | old | <id клиента> — закрыть сессии этой витрины (клиенты снова пишут боту)."""
+    if not is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    arg = parts[1].lower() if len(parts) > 1 else ""
+    rows = await store.list_open_sessions(limit=1000, tenant=_tenant())
+    if arg == "all":
+        picked = rows
+    elif arg == "old":
+        picked = [r for r in rows if _is_stale(r)]
+    elif arg.lstrip("-").isdigit():
+        picked = [r for r in rows if r.client_id == int(arg)]
+    else:
+        await message.answer("Использование: /reset_sessions all | old | ID клиента. Список: /sessions")
+        return
+    for r in picked:
+        await _end_session(
+            message.bot, r.client_id, r.thread_id,
+            "✅ Обращение к оператору завершено. Задавайте вопрос боту.",
+        )
+    await message.answer(f"✅ Сессий закрыто: {len(picked)}." if picked else "Подходящих открытых сессий нет.")

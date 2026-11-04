@@ -157,6 +157,19 @@ async def close_session(
         return bool(res.rowcount)
 
 
+async def touch(client_id: int, session_maker=None, *, tenant: str = DEFAULT_TENANT) -> None:
+    """Отметить активность в открытой сессии: по updated_at админ отличает живые обращения от зависших."""
+    sm = resolve_session_maker(session_maker)
+    async with sm() as s:
+        await s.execute(
+            update(OperatorSession)
+            .where(OperatorSession.tenant == tenant, OperatorSession.client_id == client_id,
+                   OperatorSession.status == STATUS_OPEN)
+            .values(updated_at=_now())
+        )
+        await s.commit()
+
+
 async def set_thread(
     client_id: int, thread_id: int, session_maker=None, *, tenant: str = DEFAULT_TENANT
 ) -> None:

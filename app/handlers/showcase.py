@@ -149,7 +149,7 @@ async def cmd_help(message: Message):
     if is_admin(message.from_user.id):
         text += (
             "\n\nАдминистратору: /corpus_stats, /corpus_upload (.md/.txt/.zip), /corpus_delete, /showcase_usage, "
-            "/invite, /invites, /revoke_invite, /allow, /deny, /members"
+            "/invite, /invites, /revoke_invite, /allow, /deny, /members, /sessions, /reset_sessions"
         )
     await message.answer(text)
 

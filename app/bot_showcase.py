@@ -51,6 +51,8 @@ _ADMIN_COMMANDS = _CLIENT_COMMANDS + [
     BotCommand(command="allow", description="Выдать доступ по ID"),
     BotCommand(command="deny", description="Отозвать доступ"),
     BotCommand(command="members", description="Участники"),
+    BotCommand(command="sessions", description="Открытые сессии оператора"),
+    BotCommand(command="reset_sessions", description="Сбросить сессии оператора"),
 ]
 
 

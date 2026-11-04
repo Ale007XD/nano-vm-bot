@@ -678,3 +678,28 @@ class TestNamedWeekday:
         ctx.source = src
         [p] = intake.parse_response(J(rem(at="2026-11-03T09:00")), ctx).proposals
         assert p.when.startswith("03.11")
+
+
+class TestTimeOnlyWithDayWord:
+    """Живой прогон: «…напомни завтра в 9 позвонить врачу» → модель вернула at=null, time=09:00."""
+
+    @pytest.mark.parametrize("src,when", [("купи сыр и напомни завтра в 9 позвонить врачу", "03.11"),
+                                          ("напомни послезавтра в 9 позвонить врачу", "04.11"),
+                                          ("напомни сегодня в 9 позвонить врачу", "02.11")])
+    def test_day_word_decides_the_date(self, ctx, src, when):
+        ctx.source = src
+        [p] = intake.parse_response(J(rem(at=None, time="09:00")), ctx).proposals
+        assert p.when == f"{when} ({'пн вт ср'.split()[int(when[:2]) - 2]}) 09:00"
+
+    def test_without_day_word_still_asks(self, ctx):
+        ctx.source = "напомни в 9 позвонить"
+        r = intake.parse_response(J(rem(at=None, time="09:00")), ctx)
+        assert not r.proposals and r.notes
+
+    def test_no_time_still_asks(self, ctx):
+        ctx.source = "напомни завтра позвонить"
+        r = intake.parse_response(J(rem(at=None, time=None)), ctx)
+        assert not r.proposals and r.notes
+
+    def test_prompt_separates_expense_from_shopping(self, ctx):
+        assert "кофе 4,5 доллара" in intake.build_system_prompt(ctx)
