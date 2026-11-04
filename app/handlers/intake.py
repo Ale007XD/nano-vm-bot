@@ -70,7 +70,11 @@ async def _llm(system: str, user: str) -> str:
             logger.warning("intake: модель не выдала JSON (json_validate_failed) — считаем, что записывать нечего")
             return '{"items": []}'
         raise
+    _llm.seen_models.add(f"{getattr(resp, 'provider', '?')}/{getattr(resp, 'model', '?')}")  # для отчётов: какая модель отвечала на самом деле
     return resp.content
+
+
+_llm.seen_models = set()
 
 
 def _keyboard(token: str) -> InlineKeyboardMarkup:

@@ -128,6 +128,18 @@ CASES: List[Case] = [
     Case("reminder", "ну это, напомни мне завтра в шесть вечера забрать посылку",
          [{"type": "reminder", "text_has": "посылк", "run_at": "2026-11-03T11:00:00"}],
          [_r("забрать посылку", "2026-11-03T18:00")]),
+    Case("reminder", "во вторник в 10 сдать отчёт",
+         [{"type": "reminder", "text_has": "отчёт", "run_at": "2026-11-03T03:00:00"}],
+         [_r("сдать отчёт", "2026-11-03T10:00")]),
+    Case("reminder", "в среду в 12 дня записаться к врачу",
+         [{"type": "reminder", "text_has": "врач", "run_at": "2026-11-04T05:00:00"}],
+         [_r("записаться к врачу", "2026-11-04T12:00")]),
+    Case("reminder", "в четверг в 19:00 футбол с ребятами",
+         [{"type": "reminder", "text_has": "футбол", "run_at": "2026-11-05T12:00:00"}],
+         [_r("футбол с ребятами", "2026-11-05T19:00")]),
+    Case("reminder", "напомни в воскресенье в 8 утра позвонить маме",
+         [{"type": "reminder", "text_has": "мам", "run_at": "2026-11-08T01:00:00"}],
+         [_r("позвонить маме", "2026-11-08T08:00")]),
     # --- покупки -----------------------------------------------------------------------------------------------
     Case("shopping", "купи молоко два литра, хлеб и яйца",
          [{"type": "shopping", "items": ["молок", "хлеб", "яйц"]}],
@@ -418,6 +430,10 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
          f"| Задержка p50 / p95 | {quantile(lat, .5):.1f} с / {quantile(lat, .95):.1f} с |"]
     if repeat > 1:
         stable = sum(len({r.verdict.ok for r in rs if not r.verdict.infra}) <= 1 for rs in runs.values())
+        rounds = [[rs[i] for rs in runs.values() if i < len(rs) and not rs[i].verdict.infra] for i in range(repeat)]
+        rates = sorted(100 * sum(r.verdict.ok for r in rd) / len(rd) for rd in rounds if rd)
+        if rates:
+            L.append(f"| Успех по сериям прогонов: медиана / худшая | {quantile(rates, .5):.0f}% / {rates[0]:.0f}% |")
         L.append(f"| Стабильные фразы (одинаковый вердикт во всех прогонах) | {stable}/{len(runs)} ({pct(stable, len(runs))}) |")
     L += ["", "## По группам", "", "| Группа | Успех | Фраз |", "|---|---|---|"]
     groups: Dict[str, List[Run]] = defaultdict(list)
@@ -437,7 +453,9 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
             shown += f" ({r0.verdict.error.replace('|', '/')})"
         if repeat > 1:
             shown += f" · {ok}/{len(rs)}"
-        L.append(f"| {mark} | {c.group} | {c.text.replace('|', '/')} | {shown} | {sum(r.seconds for r in rs) / len(rs):.1f} с |")
+        secs = sorted(r.seconds for r in rs)
+        timing = f"{quantile(secs, .5):.1f} с (макс {secs[-1]:.1f})" if repeat > 1 else f"{secs[0]:.1f} с"
+        L.append(f"| {mark} | {c.group} | {c.text.replace('|', '/')} | {shown} | {timing} |")
     bad = [r for r in first if not r.verdict.ok and not r.verdict.infra]
     if bad:
         L += ["", "## Расхождения", ""]
@@ -475,6 +493,9 @@ async def main_async(a: argparse.Namespace) -> int:
             runs[c.text].append(await run_case(c, llm, space, retries=a.retries))
 
     await asyncio.gather(*[one(c) for c in cases for _ in range(a.repeat)])
+    seen = sorted(getattr(llm, "seen_models", ()))
+    if seen:  # фактическая модель из ответов провайдера (при фолбэке их может быть несколько)
+        model = ", ".join(seen)
     md = report(runs, a.repeat, model, datetime.now().strftime("%Y-%m-%d %H:%M"))
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(md)

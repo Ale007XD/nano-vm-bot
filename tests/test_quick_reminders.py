@@ -18,7 +18,7 @@ from app.handlers import messages as hm  # noqa: E402
 
 ME = 7
 TZ = "Asia/Ho_Chi_Minh"
-NOW = datetime(2026, 11, 4, 5, 27, tzinfo=timezone.utc)  # 12:27 по Хошимину, среда
+NOW = datetime(2027, 3, 3, 5, 27, tzinfo=timezone.utc)  # 12:27 по Хошимину, среда; в будущем, т.к. create() сверяет с реальными часами
 
 
 @pytest_asyncio.fixture
@@ -73,20 +73,20 @@ class TestTrigger:
 class TestHandle:
     @pytest.mark.asyncio
     async def test_relative_time_creates_real_reminder(self, sm):
-        llm = llm_says(item(text="Напоминание", at="2026-11-04T12:32"))
+        llm = llm_says(item(text="Напоминание", at="2027-03-03T12:32"))
         out = await quick.handle("Оповещение через 5 минут", ME, llm, now=NOW)
         assert "⏰" in out and "/cancel_task r" in out
         rs = await personal.list_reminders(ME, TZ)
         assert len(rs) == 1 and rs[0].text == "Напоминание"
-        assert rs[0].next_run_at == datetime(2026, 11, 4, 5, 32)  # 12:32 по Хошимину в UTC
-        assert "12:32" in llm.seen["system"] or "2026-11-04 12:27" in llm.seen["system"]
+        assert rs[0].next_run_at == datetime(2027, 3, 3, 5, 32)  # 12:32 по Хошимину в UTC
+        assert "12:32" in llm.seen["system"] or "2027-03-03 12:27" in llm.seen["system"]
 
     @pytest.mark.asyncio
     async def test_weekday(self, sm):
         out = await quick.handle("напомни в пятницу в 9:00 отчёт", ME,
                                  llm_says(item(text="отчёт", weekday="fri", time="09:00")), now=NOW)
         assert "⏰" in out
-        assert (await personal.list_reminders(ME, TZ))[0].next_run_at == datetime(2026, 11, 6, 2, 0)
+        assert (await personal.list_reminders(ME, TZ))[0].next_run_at == datetime(2027, 3, 5, 2, 0)
 
     @pytest.mark.asyncio
     async def test_recurring(self, sm):
@@ -122,7 +122,7 @@ class TestHandle:
     @pytest.mark.asyncio
     async def test_past_time_rejected(self, sm):
         out = await quick.handle("напомни вчера в 10:00 позвонить", ME,
-                                 llm_says(item(at="2026-11-03T10:00")), now=NOW)
+                                 llm_says(item(at="2027-03-02T10:00")), now=NOW)
         assert out and "⏰" not in out
         assert await personal.list_reminders(ME, TZ) == []
 
@@ -140,20 +140,20 @@ class TestHandle:
 
     @pytest.mark.asyncio
     async def test_group_note(self, sm):
-        llm = llm_says(item(at="2026-11-04T13:00"))
+        llm = llm_says(item(at="2027-03-03T13:00"))
         assert "личные сообщения" in await quick.handle("напомни в 13:00", ME, llm, in_group=True, now=NOW)
         assert "личные" not in await quick.handle("напомни в 13:00", ME, llm, now=NOW)
 
     @pytest.mark.asyncio
     async def test_html_escaped(self, sm):
-        out = await quick.handle("напомни в 13:00", ME, llm_says(item(text="<b>x</b>", at="2026-11-04T13:00")), now=NOW)
+        out = await quick.handle("напомни в 13:00", ME, llm_says(item(text="<b>x</b>", at="2027-03-03T13:00")), now=NOW)
         assert "&lt;b&gt;x&lt;/b&gt;" in out
 
     def test_prompt_is_reminder_only(self):
         ctx = intake.Context(now_local=NOW, tz=TZ, currency="RUB", kind="personal", members={}, categories=[],
                              only=("reminder",))
         p = intake.build_system_prompt(ctx)
-        assert "shopping" not in p and "expense" not in p and "2026-11-04" in p
+        assert "type\":\"shopping" not in p and "type\":\"expense" not in p and "2027-03-03" in p
 
 
 def msg(text="напомни через 5 минут", chat="private"):
@@ -206,7 +206,7 @@ def test_datetime_prompt_forbids_promises():
 
 @pytest.mark.asyncio
 async def test_named_weekday_beats_wrong_model_date(sm):
-    """Среда 04.11, «в пятницу в 9», модель дала среду → ставим пятницу 06.11 09:00 (02:00 UTC)."""
-    llm = llm_says(item(text="отчёт", at="2026-11-04T09:00"))
+    """Среда 03.03, «в пятницу в 9», модель дала среду → ставим пятницу 05.03 09:00 (02:00 UTC)."""
+    llm = llm_says(item(text="отчёт", at="2027-03-03T09:00"))
     await quick.handle("напомни в пятницу в 9 отчёт", ME, llm, now=NOW)
-    assert (await personal.list_reminders(ME, TZ))[0].next_run_at == datetime(2026, 11, 6, 2, 0)
+    assert (await personal.list_reminders(ME, TZ))[0].next_run_at == datetime(2027, 3, 5, 2, 0)

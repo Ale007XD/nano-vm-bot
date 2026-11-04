@@ -70,6 +70,35 @@ class TestIntakeEval:
         md = ev.report(by, 1, "m", "t")
         assert "Успешных прогонов (строго)" in md and "100%" in md and "p50" in md and "## Фразы" in md
 
+    def test_weekday_phrases_in_grid(self, ev):
+        days = {"вторник", "среду", "четверг", "воскресенье", "субботу", "пятницу"}
+        got = {d for d in days if any(d in c.text for c in ev.CASES)}
+        assert got == days  # вт, ср, чт, пт, сб, вс — по фразе минимум
+
+    def test_repeat_report_has_series_median_worst_and_timing(self, ev):
+        from app.spaces import intake
+
+        case = ev.CASES[0]
+        ok = asyncio.run(ev.run_case(case, ev.oracle(ev.CASES), ev.build_space()))
+        bad = ev.Run(case, ev.Verdict(False, 0, 0, 1, "x"), 2.0, "—", [], "")
+        good = ev.Run(case, ok.verdict, 1.0, ok.shown, [], "")
+        md = ev.report({case.text: [good, bad, good]}, 3, "m", "t")
+        assert "медиана / худшая | 100% / 0%" in md  # серии: 100%, 0%, 100% → медиана по рангу, худшая 0%
+        assert "(макс 2.0)" in md and intake  # время фразы — медиана и максимум
+
+    def test_model_name_collected_from_provider_response(self, monkeypatch):
+        from types import SimpleNamespace
+
+        h = _handler()
+        h._llm.seen_models.clear()
+
+        async def ok(messages, **k):
+            return SimpleNamespace(content="{}", provider="groq", model="openai/gpt-oss-20b")
+
+        TestIntakeLlmWrapper._patch(None, monkeypatch, ok)
+        asyncio.run(h._llm("s", "u"))
+        assert h._llm.seen_models == {"groq/openai/gpt-oss-20b"}
+
 
 def _proposals(ev, case):
     from app.spaces import intake
