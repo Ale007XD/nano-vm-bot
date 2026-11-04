@@ -202,3 +202,11 @@ def test_datetime_prompt_forbids_promises():
     from app.utils.helpers import current_datetime_prompt
     p = current_datetime_prompt("UTC")
     assert "не обещай" in p and "/remind" in p
+
+
+@pytest.mark.asyncio
+async def test_named_weekday_beats_wrong_model_date(sm):
+    """Среда 04.11, «в пятницу в 9», модель дала среду → ставим пятницу 06.11 09:00 (02:00 UTC)."""
+    llm = llm_says(item(text="отчёт", at="2026-11-04T09:00"))
+    await quick.handle("напомни в пятницу в 9 отчёт", ME, llm, now=NOW)
+    assert (await personal.list_reminders(ME, TZ))[0].next_run_at == datetime(2026, 11, 6, 2, 0)

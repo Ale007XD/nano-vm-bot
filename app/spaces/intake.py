@@ -104,6 +104,7 @@ class Context:
     members: Dict[int, str]  # telegram id -> имя
     categories: List[str]
     metrics: Dict[str, "metrics.Metric"] = field(default_factory=dict)  # свои показатели (без расходов)
+    source: str = ""  # исходный текст: день недели, названный человеком, модель иногда считает неверно
     only: Tuple[str, ...] = ()  # разрешённые типы действий; пусто — все (личные напоминания: ("reminder",))
 
 
@@ -304,6 +305,21 @@ def _once_time(it: dict, ctx: Context) -> Optional[datetime]:
     return None
 
 
+_DAY_NAMES = {"понедельник": 0, "вторник": 1, "среду": 2, "среда": 2, "четверг": 3, "пятницу": 4, "пятница": 4,
+              "субботу": 5, "суббота": 5, "воскресенье": 6}
+_DAY_RE = re.compile(r"\b(?:в|во|на|к)\s+(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\b",
+                     re.I)
+_RELATIVE = re.compile(r"завтра|сегодня|вчера|через|\d\s*числа", re.I)
+
+
+def _named_weekday(source: str) -> Optional[int]:
+    """День недели, названный в тексте («в пятницу»), если он один и нет «завтра/через…» — иначе None."""
+    if not source or _RELATIVE.search(source):
+        return None
+    days = {_DAY_NAMES[m.lower()] for m in _DAY_RE.findall(source)}
+    return days.pop() if len(days) == 1 else None
+
+
 def _reminder(it: dict, ctx: Context, notes: List[str]) -> Optional[ReminderP]:
     text = _s(it.get("text"), reminders.MAX_TEXT)
     if not text:
@@ -316,6 +332,9 @@ def _reminder(it: dict, ctx: Context, notes: List[str]) -> Optional[ReminderP]:
         if at is None:
             notes.append(f"«{text}»: не понял, когда напомнить — укажите время")
             return None
+        named = _named_weekday(ctx.source)
+        if named is not None and at.weekday() != named:  # модель ошиблась с датой — верим названному дню
+            at = _next_at(ctx, at.hour, at.minute, named)
         if at < ctx.now_local - timedelta(seconds=60):
             notes.append(f"«{text}»: это время уже прошло")
             return None
@@ -480,6 +499,7 @@ async def make_context(space: Space, members: Dict[int, str], now: Optional[date
 
 async def analyze(text: str, space: Space, members: Dict[int, str], llm: LLM, now: Optional[datetime] = None) -> Parsed:
     ctx = await make_context(space, members, now)
+    ctx.source = text
     raw = await llm(build_system_prompt(ctx), text[:MAX_TEXT_IN])
     return parse_response(raw, ctx)
 

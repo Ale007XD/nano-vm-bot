@@ -43,7 +43,7 @@ async def handle(
     tz = settings.BOT_TIMEZONE
     now_local = (now or datetime.now(pytz.utc)).astimezone(pytz.timezone(tz))
     ctx = intake.Context(now_local=now_local, tz=tz, currency="RUB", kind=personal.PERSONAL_KIND, members={},
-                         categories=[], only=("reminder",))
+                         categories=[], source=text, only=("reminder",))
     try:
         parsed = intake.parse_response(await llm(intake.build_system_prompt(ctx), text[:intake.MAX_TEXT_IN]), ctx)
     except intake.IntakeError as e:

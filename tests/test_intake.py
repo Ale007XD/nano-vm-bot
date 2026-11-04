@@ -658,3 +658,23 @@ class TestCategoryHint:
         assert "категория определяет показатель" not in intake.build_system_prompt(no_cats)
         none = intake.Context(**base)
         assert "категория определяет показатель" not in intake.build_system_prompt(none)
+
+
+class TestNamedWeekday:
+    """Живой прогон: модель вернула 04.11 (ср) вместо «в пятницу» — день недели из текста главнее её даты."""
+
+    def test_wrong_date_is_corrected(self, ctx):
+        ctx.source = "напомни Маме в пятницу в 9 утра позвонить бабушке"
+        [p] = intake.parse_response(J(rem(at="2026-11-04T09:00", **{"for": "Саша"})), ctx).proposals
+        assert p.when == "06.11 (пт) 09:00" and p.run_at == "2026-11-06T02:00:00"
+
+    def test_correct_date_untouched(self, ctx):
+        ctx.source = "в пятницу в 9 поехать"
+        [p] = intake.parse_response(J(rem(at="2026-11-06T09:00")), ctx).proposals
+        assert p.run_at == "2026-11-06T02:00:00"
+
+    @pytest.mark.parametrize("src", ["завтра в пятницу в 9", "в пятницу и в субботу в 9", "через 2 часа в пятницу", ""])
+    def test_ambiguous_source_ignored(self, ctx, src):
+        ctx.source = src
+        [p] = intake.parse_response(J(rem(at="2026-11-03T09:00")), ctx).proposals
+        assert p.when.startswith("03.11")
