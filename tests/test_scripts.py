@@ -412,3 +412,107 @@ class TestRefusalsAndRaw:
         md = ev.report({case.text: [r]}, 1, "m", "t")
         assert not r.verdict.ok and "ответ модели" in md and '"amount": 1' in md and "`x`" not in md
         assert "Отказы модели вместо JSON" in md
+
+
+class TestShowcaseOps:
+    @pytest.fixture
+    def ops(self):
+        return load("showcase_ops")
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        import sqlite3
+
+        path = str(tmp_path / "bot.db")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE operator_sessions (tenant TEXT, client_id INT, thread_id INT, status TEXT, "
+                    "client_name TEXT, summary TEXT, opened_at TEXT, updated_at TEXT, PRIMARY KEY (tenant, client_id))")
+        rows = [("jurist", 1, 10, "open", "Старый", "", "2026-11-01 10:00:00", "2026-11-01 10:00:00"),
+                ("jurist", 2, 11, "open", "Свежий", "", "2026-11-04 08:00:00", "2026-11-04 08:00:00"),
+                ("reklama", 3, 12, "open", "Реклама", "", "2026-11-04 08:00:00", "2026-11-04 08:00:00"),
+                ("jurist", 4, 13, "closed", "Закрыт", "", "2026-11-01 10:00:00", "2026-11-01 10:00:00"),
+                ("", 5, 14, "open", "Наследный", "", "2026-10-20 10:00:00", "2026-10-20 10:00:00")]
+        con.executemany("INSERT INTO operator_sessions VALUES (?,?,?,?,?,?,?,?)", rows)
+        con.commit()
+        con.close()
+        return path
+
+    @pytest.fixture
+    def env(self, tmp_path):
+        path = tmp_path / ".env"
+        path.write_text('SHOWCASES=[{"slug":"reklama","token":"123456:SECRETSECRETSECRETSECRETSECRETSEC",'
+                        '"operator_chat_id":-100},{"slug":"jurist","token":"654321:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",'
+                        '"operator_chat_id":-100}]\n')
+        return str(path)
+
+    NOW = None
+
+    def now(self):
+        from datetime import datetime
+
+        return datetime(2026, 11, 4, 9, 0)
+
+    def test_status_finds_stale_shared_chat_and_orphans_without_leaking_tokens(self, ops, db, env, capsys):
+        assert ops.main(["--db", db, "--env", env], now=self.now()) == 1
+        out = capsys.readouterr().out
+        assert "витрина «jurist»: 1 открытых сессий без обновлений больше 24 ч" in out
+        assert "одна группа оператора -100" in out
+        assert "которой нет в конфигурации" in out  # tenant '' не среди витрин
+        assert "SECRET" not in out and "ZZZZ" not in out and "123456" not in out
+
+    def test_close_dry_run_changes_nothing(self, ops, db, env, capsys):
+        import sqlite3
+
+        assert ops.main(["--db", db, "--env", env, "close", "--tenant", "jurist"], now=self.now()) == 0
+        assert "Будет закрыто: 2" in capsys.readouterr().out
+        assert sqlite3.connect(db).execute("select count(*) from operator_sessions where status='open'").fetchone()[0] == 4
+
+    def test_close_older_only_and_tenant_isolation(self, ops, db, env, capsys):
+        import sqlite3
+
+        assert ops.main(["--db", db, "--env", env, "close", "--tenant", "jurist", "--older-hours", "24", "--yes"],
+                        now=self.now()) == 0
+        assert "Закрыто: 1" in capsys.readouterr().out
+        st = dict(((t, c), s) for t, c, s in sqlite3.connect(db).execute(
+            "select tenant, client_id, status from operator_sessions"))
+        assert st[("jurist", 1)] == "closed" and st[("jurist", 2)] == "open"
+        assert st[("reklama", 3)] == "open" and st[("", 5)] == "open"  # чужие витрины не тронуты
+
+    def test_close_single_client_and_legacy_tenant(self, ops, db, env, capsys):
+        import sqlite3
+
+        assert ops.main(["--db", db, "--env", env, "close", "--tenant", "", "--yes"], now=self.now()) == 0
+        assert ops.main(["--db", db, "--env", env, "close", "--tenant", "jurist", "--client", "2", "--yes"],
+                        now=self.now()) == 0
+        left = sqlite3.connect(db).execute("select tenant, client_id from operator_sessions where status='open' "
+                                           "order by client_id").fetchall()
+        assert left == [("jurist", 1), ("reklama", 3)]
+
+    def test_errors(self, ops, tmp_path, capsys):
+        assert ops.main(["--db", str(tmp_path / "none.db")]) == 2
+        bad = tmp_path / ".env"
+        bad.write_text("SHOWCASES=[oops\n")
+        import sqlite3
+
+        path = str(tmp_path / "e.db")
+        sqlite3.connect(path).execute("CREATE TABLE operator_sessions (tenant TEXT, client_id INT, thread_id INT, "
+                                      "status TEXT, client_name TEXT, summary TEXT, opened_at TEXT, updated_at TEXT)")
+        assert ops.main(["--db", path, "--env", str(bad)]) == 2
+        assert "неверный JSON" in capsys.readouterr().err
+
+    def test_db_path_from_database_url(self, ops):
+        assert ops.db_path({"DATABASE_URL": "sqlite+aiosqlite:///data/x.db"}) == "data/x.db"
+        assert ops.db_path({}) == "data/bot.db" and ops.db_path({}, "z.db") == "z.db"
+
+    def test_clean_setup_exit_zero(self, ops, tmp_path, capsys):
+        import sqlite3
+
+        path = str(tmp_path / "c.db")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE operator_sessions (tenant TEXT, client_id INT, thread_id INT, status TEXT, "
+                    "client_name TEXT, summary TEXT, opened_at TEXT, updated_at TEXT)")
+        con.commit()
+        env = tmp_path / ".env"
+        env.write_text('SHOWCASES=[{"slug":"a","token":"1:x","operator_chat_id":-1},{"slug":"b","token":"2:y",'
+                       '"operator_chat_id":-2}]\n')
+        assert ops.main(["--db", path, "--env", str(env)], now=self.now()) == 0
