@@ -151,6 +151,7 @@ def main(argv: Optional[List[str]] = None, now: Optional[datetime] = None) -> in
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--db", default="")
     p.add_argument("--env", default=".env")
+    p.add_argument("--no-copy", dest="copy", action="store_false", default=True, help="не копировать вывод в буфер обмена")
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     c = sub.add_parser("close")
@@ -186,7 +187,13 @@ def main(argv: Optional[List[str]] = None, now: Optional[datetime] = None) -> in
             return 2
         rows = sessions(con)
         warns = warnings(shows, rows, now, con)
-        print(render_status(shows, rows, warns, path))
+        text = render_status(shows, rows, warns, path)
+        print(text)
+        if getattr(a, "copy", False):
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from clip import announce
+
+            announce(text)
         return 1 if warns else 0
     except sqlite3.Error as e:
         print(f"ошибка БД: {e}", file=sys.stderr)

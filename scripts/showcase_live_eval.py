@@ -45,6 +45,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+from clip import announce  # noqa: E402
 from intake_live_eval import (  # noqa: E402
     InfraError,
     ensure_env,
@@ -452,6 +453,7 @@ async def main_async(a: argparse.Namespace) -> int:
     md = report(runs, a.repeat, meta, a.retrieval_only)
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(md)
+    announce(md, getattr(a, "copy", False))
     done = [r for rs in runs.values() for r in rs if not r.verdict.infra]
     total = sum(len(rs) for rs in runs.values())
     ok = sum(r.verdict.ok for r in done)
@@ -467,6 +469,7 @@ def main() -> None:
     p.add_argument("--showcase", default="", help="slug витрины из SHOWCASES (по умолчанию первая)")
     p.add_argument("--cases", default="", help="JSON с вопросами (кроме встроенных проверок безопасности)")
     p.add_argument("--out", default="showcase_eval_report.md")
+    p.add_argument("--no-copy", dest="copy", action="store_false", default=True, help="не копировать отчёт в буфер обмена")
     p.add_argument("--top-k", type=int, default=0, help="сколько фрагментов брать (по умолчанию CORPUS_TOP_K)")
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--only", default="", help="подстрока вопроса или имя группы")

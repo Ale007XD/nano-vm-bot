@@ -466,6 +466,13 @@ def report(runs: Dict[str, List[Run]], repeat: int, model: str, started: str) ->
     return "\n".join(L) + "\n"
 
 
+def _announce(text: str, enabled: bool) -> None:
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from clip import announce
+
+    announce(text, enabled)
+
+
 async def main_async(a: argparse.Namespace) -> int:
     cases = [c for c in CASES if not a.only or a.only.casefold() in c.text.casefold() or a.only == c.group]
     if not cases:
@@ -499,6 +506,7 @@ async def main_async(a: argparse.Namespace) -> int:
     md = report(runs, a.repeat, model, datetime.now().strftime("%Y-%m-%d %H:%M"))
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(md)
+    _announce(md, getattr(a, "copy", False))
     every = [r for rs in runs.values() for r in rs]
     answered = [r for r in every if not r.verdict.infra]
     if len(answered) < len(every) / 2:  # половина прогонов не получила ответа — цифрам верить нельзя
@@ -513,6 +521,7 @@ async def main_async(a: argparse.Namespace) -> int:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", default="intake_eval_report.md")
+    p.add_argument("--no-copy", dest="copy", action="store_false", default=True, help="не копировать отчёт в буфер обмена")
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--only", default="", help="подстрока фразы или имя группы (reminder|shopping|expense|record|mixed|neutral|injection)")
     p.add_argument("--model", default="", help="переопределить SPACE_INTAKE_MODEL на время прогона")

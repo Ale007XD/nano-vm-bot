@@ -1009,6 +1009,10 @@ async def main_async(a: argparse.Namespace) -> int:
     md = render(chosen, datetime.now().strftime("%Y-%m-%d %H:%M"), time.perf_counter() - t0)
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(md)
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from clip import announce
+
+    announce(md, getattr(a, "copy", False))
     bad = sum(c.status == FAIL for c in chosen)
     warn = sum(c.status == WARN for c in chosen)
     print(f"\nитог: ✅ {sum(c.status == PASS for c in chosen)} ❌ {bad} ⚠️ {warn} ⏭ {sum(c.status == SKIP for c in chosen)} → {a.out}")
@@ -1018,6 +1022,7 @@ async def main_async(a: argparse.Namespace) -> int:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", default="server_check_report.md")
+    p.add_argument("--no-copy", dest="copy", action="store_false", default=True, help="не копировать отчёт в буфер обмена")
     p.add_argument("--only", default="", help="группа (env, db, telegram, agents, vm, memory, access, byok, billing, llm, search, voice, content, skills, mcp, scheduler, showcase, spaces) или подстрока названия")
     p.add_argument("--offline", action="store_true", help="без сетевых вызовов (Telegram, LLM, поиск, MCP)")
     p.add_argument("--skip-llm", action="store_true", help="без платных вызовов к моделям")

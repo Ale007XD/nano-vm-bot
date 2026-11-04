@@ -2,6 +2,12 @@
 
 All notable changes to Alex-Nano-Bot will be documented in this file.
 
+## [1.25.3] - 2026-11-05
+
+### Added
+- Отчёты скриптов (`showcase_live_eval.py`, `intake_live_eval.py`, `server_check.py`, `showcase_ops.py status`) сразу копируются в буфер обмена (`scripts/clip.py`, без зависимостей): OSC 52 — в буфер вашего компьютера через SSH и `docker exec -t`, при его отсутствии — wl-copy / xclip / xsel / pbcopy / clip.exe. Без терминала (`docker exec` без `-t`) скрипт скажет об этом и подскажет флаг. Отключается `--no-copy`
+- `scripts/prompts/jurist.md` — промпт витрины «Юрист»: базовые правила + «приводи прямое утверждение из базы, в том числе отрицательное, не пиши „в базе нет сведений“, если сведения есть» (промах «гарантии списания» из прогона) + запрет обещать исход дела. Проходит проверку промптов без предупреждений
+
 ## [1.25.2] - 2026-11-05
 
 ### Fixed

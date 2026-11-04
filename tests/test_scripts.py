@@ -27,6 +27,18 @@ def sc():
     return load("server_check")
 
 
+@pytest.fixture(scope="module")
+def se():
+    os.environ.setdefault("BOT_TOKEN", "selftest")
+    os.environ.setdefault("OPENROUTER_API_KEY", "selftest")
+    return load("showcase_live_eval")
+
+
+@pytest.fixture(scope="module")
+def clip():
+    return load("clip")
+
+
 async def run_all(ev, llm):
     space = ev.build_space()
     return [await ev.run_case(c, llm, space) for c in ev.CASES]
@@ -415,6 +427,12 @@ class TestRefusalsAndRaw:
 
 
 class TestShowcaseOps:
+    @pytest.fixture(autouse=True)
+    def _no_clipboard(self, monkeypatch):
+        import sys as _sys
+
+        monkeypatch.setitem(_sys.modules, "clip", type("C", (), {"announce": staticmethod(lambda *a, **k: None)}))
+
     @pytest.fixture
     def ops(self):
         return load("showcase_ops")
@@ -519,12 +537,6 @@ class TestShowcaseOps:
 
 
 class TestShowcaseEval:
-    @pytest.fixture(scope="module")
-    def se(self):
-        os.environ.setdefault("BOT_TOKEN", "selftest")
-        os.environ.setdefault("OPENROUTER_API_KEY", "selftest")
-        return load("showcase_live_eval")
-
     def run(self, se, llm, cases=None, only_retrieval=False, top_k=3):
         from app.core.showcase_prompt import DEFAULT_SHOWCASE_PROMPT
 
@@ -689,3 +701,58 @@ class TestShowcaseEval:
         v = se.judge(cases[q], ans, 8)
         v_answer_only = [p for p in v.problems if "не в топ" not in p]
         assert (not v_answer_only) is ok, v.problems
+
+
+class TestClip:
+    def test_osc52_to_tty_has_base64_payload(self, clip, tmp_path):
+        import base64
+
+        tty = tmp_path / "tty"
+        assert clip.copy("Привет, мир", tty_path=str(tty), env={}) == "osc52"
+        data = tty.read_text()
+        assert data.startswith("\033]52;c;") and data.endswith("\a")
+        assert base64.b64decode(data[len("\033]52;c;"):-1]).decode() == "Привет, мир"
+
+    def test_tmux_and_screen_wrappers(self, clip):
+        seq = clip.osc52_sequence("x", {"TMUX": "1"})
+        assert seq.startswith("\033Ptmux;\033\033]52") and seq.endswith("\033\\")
+        assert clip.osc52_sequence("x", {"TERM": "screen-256color"}).startswith("\033P\033]52")
+        assert clip.osc52_sequence("x", {"TERM": "xterm"}).startswith("\033]52;c;")
+
+    def test_falls_back_to_native_tool_without_tty(self, clip, tmp_path):
+        calls = []
+
+        class R:
+            returncode = 0
+
+        def run(cmd, **kw):
+            calls.append((cmd, kw["input"]))
+            return R()
+
+        how = clip.copy("текст", tty_path=str(tmp_path / "no" / "tty"),
+                        which=lambda n: "/usr/bin/xclip" if n == "xclip" else None, run=run)
+        assert how == "xclip" and calls == [(["xclip", "-selection", "clipboard"], "текст".encode())]
+
+    def test_nothing_available_returns_empty_and_hints_docker_t(self, clip, tmp_path, capsys):
+        assert clip.copy("x", tty_path=str(tmp_path / "no" / "tty"), which=lambda n: None) == ""
+        clip.announce("x", True, tty_path=str(tmp_path / "no" / "tty"), which=lambda n: None)
+        assert "docker exec -t" in capsys.readouterr().err
+
+    def test_huge_text_skips_osc52_and_empty_is_noop(self, clip, tmp_path):
+        tty = tmp_path / "tty"
+        assert clip.copy("a" * (clip.OSC52_LIMIT + 1), tty_path=str(tty), which=lambda n: None) == ""
+        assert not tty.exists()
+        assert clip.copy("", tty_path=str(tty)) == ""
+
+    def test_disabled_does_nothing(self, clip, tmp_path, capsys):
+        tty = tmp_path / "tty"
+        clip.announce("x", False, tty_path=str(tty))
+        assert not tty.exists() and capsys.readouterr().err == ""
+
+    def test_jurist_prompt_passes_showcase_validation(self):
+        from app.core.showcase_prompt import LONG_PROMPT_CHARS, validate_showcase_prompt
+
+        text = open(os.path.join(ROOT, "scripts", "prompts", "jurist.md"), encoding="utf-8").read()
+        check = validate_showcase_prompt(text)
+        assert check.errors == [] and check.warnings == [] and len(text) < LONG_PROMPT_CHARS
+        assert "не пиши «в базе нет сведений», если сведения есть" in text.casefold()
