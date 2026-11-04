@@ -2,6 +2,14 @@
 
 All notable changes to Alex-Nano-Bot will be documented in this file.
 
+## [1.25.1] - 2026-11-04
+
+### Added
+- `scripts/cases/jurist_cases.json` (35 вопросов, «Правовой Стандарт») и `scripts/cases/reklama_cases.json` (41 вопрос, «Широкий Формат»): составлены по загруженным корпусам, каждое ожидание (`has`/`has_any`) сверено с текстом документа-источника; группы faq, price, law, trap (похожие числа и механизмы: dpi макета и печати, 10 дней претензии и 14 дней обмена), honesty, not_in_base (ответа в базе нет — обязан отказать)
+
+### Changed
+- `showcase_live_eval.py`: `sources` понимает часть имени документа («b05_»); сравнение строк без неразрывных пробелов («10 000 ₽» модель пишет по-разному)
+
 ## [1.25.0] - 2026-11-04
 
 ### Added

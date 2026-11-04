@@ -649,3 +649,22 @@ class TestShowcaseEval:
         assert "Стабильные вопросы" in (tmp_path / "r.md").read_text(encoding="utf-8")
         assert asyncio.run(se.main_async(args(selftest=False, selftest_broken=True))) == 1
         assert asyncio.run(se.main_async(args(only="нет такого"))) == 2
+
+    def test_source_prefix_and_nbsp_normalisation(self, se):
+        ans = se.Answer([], ["b05_Сколько стоит банкротство физлица.md"], text="Госпошлина 10 000 ₽")
+        c = se.Case("q", sources=["b05_"], has=["10 000 ₽"])
+        v = se.judge(c, ans, 3)
+        assert v.ok and v.rank == 1
+        assert not se.judge(se.Case("q", sources=["b06_"]), ans, 3).retrieval_ok  # другой документ — промах
+
+    @pytest.mark.parametrize("name", ["jurist", "reklama"])
+    def test_shipped_case_files_are_valid(self, se, name):
+        cases = se.load_cases(os.path.join(ROOT, "scripts", "cases", f"{name}_cases.json"))
+        assert len(cases) >= 30 and len({c.q for c in cases}) == len(cases)
+        groups = {c.group for c in cases}
+        assert {"faq", "price", "not_in_base", "trap"} <= groups
+        for c in cases:
+            if c.refuse:
+                assert not c.sources and not c.has and not c.has_any  # отказ проверяем только по отсутствию ответа
+            else:
+                assert c.sources and (c.has or c.has_any)  # у каждого вопроса есть документ и проверяемый факт

@@ -2,7 +2,7 @@
 
 Self-hosted Telegram AI-бот с детерминированным Program-driven рантаймом, векторной памятью (RAG), базой знаний, multi-provider LLM и мультиюзерным режимом с лимитами.
 
-**Версия:** 1.25.0 · **Тесты:** 1325 passed 🟢 · ruff: clean · Python 3.12
+**Версия:** 1.25.1 · **Тесты:** 1328 passed 🟢 · ruff: clean · Python 3.12
 
 ---
 

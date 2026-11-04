@@ -16,7 +16,7 @@
 
 Файл --cases — список объектов:
   {"q": "Сколько хранится договор?", "group": "faq",
-   "sources": ["dogovor.md"],             # ожидаемый документ среди найденных (для hit@K)
+   "sources": ["dogovor.md"],             # ожидаемый документ: имя файла или его часть («b05_») — для hit@K
    "has": ["5 лет"],                      # в ответе должны быть ВСЕ подстроки (регистр не важен)
    "has_any": ["пять лет", "5 лет"],      # и хотя бы одна из этих
    "forbid": ["по закону всегда"],        # в ответе быть НЕ должно
@@ -157,7 +157,8 @@ class Verdict:
 
 
 def low(s: str) -> str:
-    return s.casefold().replace("ё", "е")
+    """Сравнение без регистра, ё/е и неразрывных пробелов («10 000 ₽» модель пишет по-разному)."""
+    return re.sub(r"[\u00a0\u202f\u2009]", " ", s).casefold().replace("ё", "е")
 
 
 def judge(case: Case, ans: Answer, top_k: int, with_answer: bool = True) -> Verdict:
@@ -167,7 +168,7 @@ def judge(case: Case, ans: Answer, top_k: int, with_answer: bool = True) -> Verd
     if case.sources:
         want = {low(s) for s in case.sources}
         for i, name in enumerate(ans.ranked_sources[:top_k], 1):
-            if low(name) in want:
+            if any(w in low(name) for w in want):  # «b05_» находит «b05_Сколько стоит банкротство физлица.md»
                 rank = i
                 break
         retrieval_ok = rank is not None
