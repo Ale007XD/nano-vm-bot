@@ -77,11 +77,32 @@ def _db():
         conn.close()
 
 # ── Проверка URL ──────────────────────────────────────────────────────────
+_CHECK_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; SiteMonitor/1.1)"}
+
+
+async def _probe(url: str, method: str):
+    # SSRF-защита: проверка адреса на КАЖДОМ запросе (DNS мог измениться); тело не читаем
+    return await safe_fetch(
+        url, method=method, headers=_CHECK_HEADERS,
+        timeout=10.0, total_timeout=20.0, max_bytes=0,
+    )
+
+
 async def _check_url(url: str) -> tuple[bool, str]:
-    """Проверяет доступность URL. Возвращает (ok, status_text)."""
+    """Проверяет доступность URL. Возвращает (ok, status_text).
+
+    HEAD дешевле, но многие сайты отвечают на него 405/501/403 или вешают соединение,
+    хотя страница открывается. Любая неудача HEAD перепроверяется обычным GET (без тела):
+    падением считается только результат GET.
+    """
     try:
-        # SSRF-защита: проверка адреса на КАЖДОЙ проверке (DNS мог измениться)
-        resp = await safe_fetch(url, method="HEAD", timeout=10.0, total_timeout=20.0, max_bytes=0)
+        try:
+            resp = await _probe(url, "HEAD")
+            need_get = resp.status_code >= 400
+        except (FetchError, httpx.RequestError):
+            need_get = True
+        if need_get:
+            resp = await _probe(url, "GET")
         return resp.status_code < 400, f"HTTP {resp.status_code}"
     except UnsafeURLError as e:
         return False, f"Адрес заблокирован: {str(e)[:80]}"
