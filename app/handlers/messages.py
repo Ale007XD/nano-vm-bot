@@ -5,6 +5,7 @@ import base64
 import logging
 import os
 import re
+import sys
 
 import httpx
 from aiogram import F, Router
@@ -78,6 +79,58 @@ async def _quick_reminder(message: Message, text: str) -> bool:
     return True
 
 
+# Кнопки reply-клавиатуры (точное совпадение текста).
+MENU_BUTTONS = frozenset({
+    "💬 Чат", "🤖 Режим", "🛠 Навыки", "🧠 Память", "❓ Помощь", "⚙️ Настройки",
+})
+
+# Слэш-команды, которые обслуживают навыки: команда -> имя навыка в skill_loader.
+# SKILL_COMMANDS из самих навыков сюда не пробрасывается, поэтому маппинг явный.
+_SLASH_SKILLS = {"monitor": "site_monitor"}
+
+
+def _site_monitor_pending() -> dict:
+    """_pending_adds навыка site_monitor (user_id -> url) или {}, если недоступно."""
+    skill = skill_loader.get_skill("site_monitor")
+    if skill:
+        fn = getattr(skill, "__wrapped__", skill)
+        pending = getattr(fn, "__globals__", {}).get("_pending_adds")
+        if isinstance(pending, dict):
+            return pending
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "SKILL_NAME", None) == "site_monitor":
+            pending = getattr(mod, "_pending_adds", None)
+            if isinstance(pending, dict):
+                return pending
+    return {}
+
+
+def _monitor_awaits_interval(user_id: int, text: str) -> bool:
+    """После `monitor add <url>` навык ждёт число-интервал: отдаём его навыку, а не LLM."""
+    return text.strip().isdigit() and user_id in _site_monitor_pending()
+
+
+async def _run_skill_message(message: Message, skill_name: str, text: str) -> None:
+    """Прямой запуск навыка текстом сообщения (в обход агентов и LLM). Всегда отвечает."""
+    skill = skill_loader.get_skill(skill_name)
+    if not skill:
+        await message.answer(f"⚠️ Навык <code>{skill_name}</code> не загружен.")
+        return
+    try:
+        result = await skill({
+            "user_id": message.from_user.id,
+            "message_text": text,
+            "args": {"raw": text},
+            # site_monitor запускает фоновый цикл только при наличии отправителя алертов
+            "send_message": message.bot.send_message,
+        })
+    except Exception as e:
+        logger.error(f"Skill {skill_name} failed for user {message.from_user.id}: {e}", exc_info=True)
+        await message.answer("⚠️ Ошибка выполнения навыка. Подробности в логе.")
+        return
+    await message.answer(sanitize_html(str(result)) or "✅ Готово.")
+
+
 @router.message(F.text)
 async def handle_message(message: Message, state: FSMContext):
     """Handle incoming text messages"""
@@ -94,10 +147,25 @@ async def handle_message(message: Message, state: FSMContext):
         )
         return
 
-    if user_message.startswith('/') or user_message in [
-        "💬 Чат", "🤖 Режим", "🛠 Навыки", "🧠 Память", "❓ Помощь", "⚙️ Настройки"
-    ]:
+    if user_message in MENU_BUTTONS:
         logger.info(f"Skipping menu button: {user_message}")
+        return
+
+    if user_message.startswith('/'):
+        # Известные команды обработаны роутером commands раньше; сюда доходят только неизвестные.
+        parts = user_message[1:].split(maxsplit=1)
+        cmd = (parts[0] if parts else "").split('@')[0].lower()
+        skill_name = _SLASH_SKILLS.get(cmd)
+        if skill_name:
+            rest = parts[1] if len(parts) > 1 else ""
+            await _run_skill_message(message, skill_name, f"{cmd} {rest}".strip())
+            return
+        logger.info(f"Unknown command: {user_message}")
+        await message.answer("❓ Неизвестная команда. Список команд: /start")
+        return
+
+    if _monitor_awaits_interval(user.id, user_message):
+        await _run_skill_message(message, "site_monitor", user_message)
         return
 
     limit_check = await check_daily_limit(user.id)

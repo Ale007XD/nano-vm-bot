@@ -84,6 +84,15 @@ async def on_startup(bot: Bot):
     # Load skills
     logger.info("Loading skills...")
     await skill_loader.load_all_skills()
+
+    # Фоновый цикл site_monitor: сам по себе стартует только при вызове навыка,
+    # поэтому после рестарта уже сохранённые мониторинги молчали бы до первой команды.
+    _monitor_skill = skill_loader.get_skill("site_monitor")
+    if _monitor_skill:
+        try:
+            await _monitor_skill({"user_id": 0, "message_text": "", "send_message": bot.send_message})
+        except Exception as e:
+            logger.warning(f"site_monitor autostart failed: {e}")
     
     # Start scheduler
     logger.info("Starting task scheduler...")
