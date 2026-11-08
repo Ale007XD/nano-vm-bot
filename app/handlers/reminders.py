@@ -5,12 +5,12 @@ import html
 import logging
 
 import pytz
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from app.core.access import user_allowed
+from app.core.access import is_admin, user_allowed
 from app.core.config import settings
 from app.core.scheduler import task_scheduler
 from app.spaces import personal
@@ -39,7 +39,7 @@ async def cmd_remind(message: Message, state: FSMContext):
     await state.update_data(reminder_type="one_time")
 
 
-@router.message(ReminderStates.waiting_for_description)
+@router.message(ReminderStates.waiting_for_description, F.text)
 async def process_reminder_description(message: Message, state: FSMContext):
     """Process reminder description"""
     description = message.text
@@ -57,7 +57,7 @@ async def process_reminder_description(message: Message, state: FSMContext):
     await state.set_state(ReminderStates.waiting_for_time)
 
 
-@router.message(ReminderStates.waiting_for_time)
+@router.message(ReminderStates.waiting_for_time, F.text)
 async def process_reminder_time(message: Message, state: FSMContext):
     """Process reminder time"""
     time_input = message.text.lower().strip()
@@ -262,8 +262,8 @@ async def cmd_cancel(message: Message, state: FSMContext):
 @router.message(Command("scheduler_stats"))
 async def cmd_scheduler_stats(message: Message):
     """Show scheduler statistics (admin only)"""
-    if not await user_allowed(message.from_user.id):
-        await message.answer("⛔ Доступ запрещен")
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
         return
     
     try:

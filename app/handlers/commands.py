@@ -46,6 +46,21 @@ async def check_access_callback(callback: CallbackQuery) -> bool:
     return True
 
 
+async def check_admin(message: Message) -> bool:
+    """Только ADMIN_IDS. user_allowed пускает всех при BOT_OPEN_ACCESS и участников пространств."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администраторов.")
+        return False
+    return True
+
+
+async def check_admin_callback(callback: CallbackQuery) -> bool:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только для администраторов.", show_alert=True)
+        return False
+    return True
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     """Handle /start command"""
@@ -318,7 +333,7 @@ def _providers_menu_text(providers_info: list) -> str:
 @router.message(Command("models"))
 async def cmd_models(message: Message):
     """Главное меню управления моделями — только для admin"""
-    if not await check_access(message):
+    if not await check_admin(message):
         return
 
     from app.core.llm_client_v2 import llm_client
@@ -332,7 +347,7 @@ async def cmd_models(message: Message):
 @router.callback_query(F.data == "providers:menu")
 async def providers_menu(callback: CallbackQuery):
     """Возврат в главное меню провайдеров"""
-    if not await check_access_callback(callback):
+    if not await check_admin_callback(callback):
         return
 
     from app.core.llm_client_v2 import llm_client
@@ -347,7 +362,7 @@ async def providers_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "providers:refresh")
 async def providers_refresh(callback: CallbackQuery):
     """Запустить health check всех провайдеров"""
-    if not await check_access_callback(callback):
+    if not await check_admin_callback(callback):
         return
 
     await callback.answer("🔄 Проверяю...", show_alert=False)
@@ -364,7 +379,7 @@ async def providers_refresh(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("providers:show:"))
 async def providers_show(callback: CallbackQuery):
     """Детальная карточка провайдера с текущими ролями"""
-    if not await check_access_callback(callback):
+    if not await check_admin_callback(callback):
         return
 
     provider_name = callback.data.split(":", 2)[2]
@@ -396,7 +411,7 @@ async def providers_show(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("providers:models:"))
 async def providers_models(callback: CallbackQuery):
     """Список моделей провайдера для выбранной роли"""
-    if not await check_access_callback(callback):
+    if not await check_admin_callback(callback):
         return
 
     # providers:models:<provider>:<role>
@@ -429,7 +444,7 @@ async def providers_models(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("providers:set:"))
 async def providers_set(callback: CallbackQuery):
     """Применить выбор модели для роли"""
-    if not await check_access_callback(callback):
+    if not await check_admin_callback(callback):
         return
 
     # providers:set:<provider>:<role>:<idx>
@@ -746,54 +761,3 @@ async def get_user_agent_mode(user_id: int) -> str:
         user_state = result.scalar_one_or_none()
 
         return user_state.current_agent if user_state else "fastbot"
-
-
-@router.callback_query(F.data.startswith("prov:select:"))
-async def prov_select_compat(callback: CallbackQuery):
-    """Compat: старые сообщения prov:select:<name> → карточка провайдера"""
-    if not await check_access_callback(callback):
-        return
-    provider_name = callback.data.split(":", 2)[2]
-    from app.core.llm_client_v2 import llm_client
-    info = llm_client.get_models_info()
-    provider = next((p for p in info if p["name"] == provider_name), None)
-    if not provider:
-        await callback.answer("Провайдер не найден", show_alert=True)
-        return
-    status_icon = {"healthy": "🟢", "degraded": "🟡", "down": "🔴"}
-    icon = status_icon.get(provider["status"], "⚪")
-    lines = [f"{icon} <b>{provider_name}</b> — выберите роль для смены модели\n"]
-    for role, model in provider["current_roles"].items():
-        lines.append(f"• {role}: <code>{model}</code>")
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=get_provider_detail_keyboard(
-            provider_name, provider["models"], provider["current_roles"]
-        )
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "prov:close")
-async def prov_close_compat(callback: CallbackQuery):
-    """Compat: старые сообщения prov:close → удалить сообщение"""
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-    await callback.answer()
-
-
-@router.callback_query(F.data == "prov:refresh")
-async def prov_refresh_compat(callback: CallbackQuery):
-    """Compat: старые сообщения prov:refresh → health check"""
-    if not await check_access_callback(callback):
-        return
-    await callback.answer("🔄 Проверяю...", show_alert=False)
-    from app.core.llm_client_v2 import llm_client
-    await llm_client.check_health()
-    info = llm_client.get_models_info()
-    await callback.message.edit_text(
-        _providers_menu_text(info),
-        reply_markup=get_providers_keyboard(info)
-    )

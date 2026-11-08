@@ -65,7 +65,7 @@ async def memory_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(MemoryAdd.waiting_content)
+@router.message(MemoryAdd.waiting_content, F.text)
 async def memory_add_content(message: Message, state: FSMContext):
     """Process memory content"""
     content = message.text
@@ -134,7 +134,7 @@ async def memory_search_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(MemorySearch.waiting_query)
+@router.message(MemorySearch.waiting_query, F.text)
 async def memory_search_query(message: Message, state: FSMContext):
     """Process search query"""
     query = message.text
